@@ -1,0 +1,515 @@
+[project]
+name = "flowos"
+version = "0.1.1"
+description = "A Python package with a built-in web application"
+requires-python = ">=3.10,<3.15"
+license = "MIT"
+keywords = ["nlp", "langchain", "openai", "gpt", "gui"]
+readme = "README.md"
+maintainers = [
+    { name = "Atlas AI Labs", email = "dspraneeth@atlasailabs.in" },
+]
+# Define your main dependencies here
+dependencies = [
+    "flowos-base[complete]>=0.1.1",
+    # flowos-extensions:bundle-deps-start
+    "flowos-duckduckgo>=0.1.1",
+    "flowos-arxiv>=0.1.1",
+    "flowos-ibm>=0.1.1",
+    "flowos-docling>=0.1.1",
+    # flowos-extensions:bundle-deps-end
+]
+
+
+[dependency-groups]
+dev = [
+    "pytest-instafail>=0.5.0",
+    "ipykernel>=6.29.0",
+    "ruff~=0.13.1",
+    "httpx>=0.28.1",
+    "pytest>=9.0.3",
+    "requests>=2.33.0",
+    "pytest-cov>=5.0.0",
+    "pytest-mock>=3.14.0",
+    "pytest-xdist>=3.6.0",
+    "pytest-sugar>=1.0.0",
+    "respx>=0.21.1",
+    "pytest-asyncio>=0.23.0",
+    "pytest-profiling>=1.7.0",
+    "pre-commit>=3.7.0",
+    "vulture>=2.11",
+    "dictdiffer>=0.9.0",
+    "pytest-split>=0.9.0",
+    "pytest-flakefinder>=1.1.0",
+    "packaging>=24.1,<25.0",
+    "asgi-lifespan>=2.1.0",
+    "pytest-github-actions-annotate-failures>=0.2.0",
+    "blockbuster>=1.5.20,<1.6",
+    "types-aiofiles>=24.1.0.20240626",
+    "codeflash>=0.8.4",
+    "hypothesis>=6.123.17",
+    "locust~=2.43.4",
+    "pytest-rerunfailures>=15.0",
+    "scrapegraph-py>=1.10.2",
+    'elevenlabs==1.58.1; python_version == "3.12"',
+    'elevenlabs>=1.52.0; python_version != "3.12"',
+    "faker>=37.0.0",
+    "pytest-timeout>=2.3.1",
+    "pyyaml>=6.0.2",
+    "pyleak>=0.1.14",
+    "mcp-server-fetch>=2025.1.17",
+    "onnxruntime>=1.20,<1.24; python_version<'3.14'", # >=1.24 does not support Python 3.10; <1.24 allows 1.23.x for agent-lifecycle-toolkit
+    "onnxruntime>=1.26; python_version>='3.14'",
+    "fakeredis>=2.0.0",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+flowos-base = { workspace = true }
+flowos = { workspace = true }
+flowos-core = { workspace = true }
+flowos-sdk = { workspace = true }
+# flowos-extensions:bundle-sources-start
+flowos-duckduckgo = { workspace = true }
+flowos-arxiv = { workspace = true }
+flowos-ibm = { workspace = true }
+flowos-docling = { workspace = true }
+# flowos-extensions:bundle-sources-end
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
+
+[tool.uv.workspace]
+members = [
+    "src/backend/base",
+    ".",
+    "src/flowos-core",
+    "src/flowos-stepflow",
+    "src/sdk",
+    # flowos-extensions:bundle-members-start
+    "src/bundles/duckduckgo",
+    "src/bundles/arxiv",
+    "src/bundles/ibm",
+    "src/bundles/docling",
+    # flowos-extensions:bundle-members-end
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/backend/flowos"]
+
+# Without this, hatch sweeps the whole repo into the sdist -- docs images and
+# frontend assets push it past PyPI's 100 MB per-file limit and the upload is
+# rejected. The wheel only ships src/backend/flowos, so the sdist matches it.
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/backend/flowos",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+]
+
+[project.urls]
+Repository = "https://github.com/dspraneeth07/FlowOS"
+Homepage = "https://github.com/dspraneeth07/FlowOS"
+
+[project.optional-dependencies]
+docling = [
+    "flowos-docling[local]>=0.1.1",
+]
+
+docling-chunking = [
+    "flowos-docling[chunking]>=0.1.1",
+]
+
+docling-image-description = [
+    "flowos-docling[image-description]>=0.1.1",
+]
+
+audio = [
+    "webrtcvad>=2.0.10",
+]
+
+
+couchbase = [
+    "couchbase>=4.2.1"
+]
+cassio = [
+    "cassio>=0.1.7"
+]
+local = [
+    "sentence-transformers>=2.3.1",
+    "ctransformers>=0.2.10"
+]
+clickhouse-connect = [
+    "clickhouse-connect==0.7.19"
+]
+
+nv-ingest = [
+    "nv-ingest-api>=26.1.0,<27.0.0 ; python_version >= '3.12'",
+    "nv-ingest-client>=26.1.0,<27.0.0 ; python_version >= '3.12'",
+]
+
+postgresql = [
+    "sqlalchemy[postgresql_psycopg2binary]>=2.0.38,<3.0.0",
+    "sqlalchemy[postgresql_psycopg]>=2.0.38,<3.0.0",
+]
+
+[tool.uv]
+override-dependencies = [
+    # temporary force a newer python-pptx
+    "python-pptx>=1.0.2",
+    # z3-solver 4.15.7 dropped Linux wheels, pin until codeflash is removed
+    "z3-solver<4.15.7",
+    # Security: Force upgraded versions to prevent transitive deps from pulling older vulnerable versions
+    "orjson>=3.11.6",
+    "gunicorn>=25.3.0",
+    "pypdf>=6.10.0",  # Force pypdf 6.10+ to prevent vulnerable 6.6.x versions
+    "nltk>=3.9.4",
+    "Markdown>=3.8.0",
+    "dynaconf>=3.2.13",
+    "pillow>=12.1.1",  # Force Pillow 12.1.1+ to prevent CVE-vulnerable versions
+    "playwright>=1.59.0",  # Latest available on PyPI; ensures updated Chromium with CVE fixes
+    # Keep uv workspace resolution on the supported LiteLLM floor without forcing
+    # an upstream package that declares Requires-Python <3.14 onto Python 3.14.
+    # Capped below 1.92: from 1.92.0 litellm ships manylinux wheels only, so
+    # Windows and macOS get no wheel and the install dies compiling Rust.
+    # 1.91.x is pure-Python (py3-none-any) and installs on all three platforms.
+    # Must match the cap in src/backend/base/pyproject.toml.
+    "litellm>=1.85.1,<1.92; python_version < '3.14'",
+    # Transitive dependency CVE fixes
+    "lxml>=6.1.0,<7.0.0",  # CVE-2026-41066
+    "mako>=1.3.12,<2.0.0",  # CVE-2026-44307
+    "urllib3>=2.7.0,<3.0.0",  # CVE-2026-44431, CVE-2026-44432
+    "python-liquid>=2.2.0,<3.0.0",  # CVE-2026-45017
+]
+
+[project.scripts]
+flowos = "flowos.flowos_launcher:main"
+
+[tool.codespell]
+skip = '.git,*.pdf,*.svg,*.pdf,*.yaml,*.ipynb,poetry.lock,*.min.js,*.css,package-lock.json,*.trig.,**/node_modules/**,./stuff/*,*.csv'
+# Ignore latin etc
+ignore-regex = '.*(Stati Uniti|Tense=Pres).*'
+
+
+[tool.pytest.ini_options]
+timeout = 150
+timeout_method = "signal"
+minversion = "6.0"
+testpaths = ["src/backend/tests", "src/flowos-core/tests", "src/bundles/*/tests"]
+console_output_style = "progress"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::ResourceWarning",
+    "ignore:Skipped unsupported reflection:sqlalchemy.exc.SAWarning",
+    "ignore:.*SQL-parsed foreign key constraint:sqlalchemy.exc.SAWarning",
+    "ignore:autogenerate skipping metadata-specified expression-based index:UserWarning",
+]
+log_cli = true
+log_cli_format = "%(asctime)s [%(levelname)8s] %(message)s (%(filename)s:%(lineno)s)"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+markers = [
+    "async_test",
+    "api_key_required",
+    "no_blockbuster",
+    "benchmark",
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "slow: Slow-running tests",
+    "security: Security regression tests (IDOR, auth, access control)"
+]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-p no:benchmark"
+
+[tool.coverage.run]
+command_line = """
+    -m pytest --ignore=tests/integration
+    --cov --cov-report=term --cov-report=html
+    --instafail -ra -n auto -m "not api_key_required"
+"""
+source = ["src/backend/base/flowos/"]
+omit = ["*/alembic/*", "tests/*", "*/__init__.py"]
+
+
+[tool.coverage.report]
+sort = "Stmts"
+skip_empty = true
+show_missing = false
+ignore_errors = true
+
+
+[tool.coverage.html]
+directory = "coverage"
+
+
+[tool.ruff]
+target-version = "py310"
+exclude = [
+    "src/backend/base/flowos/alembic/*",
+    "src/frontend/tests/assets/*",
+    "src/flowos-core/src/flowos_core/_assets/component_index.json",
+    "docs/**/API-Reference/python-examples/**",
+]
+line-length = 120
+
+[tool.ruff.lint]
+flake8-annotations.mypy-init-return = true
+flake8-bugbear.extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Query",
+    "typer.Argument",
+    "typer.Option",
+]
+flake8-type-checking.runtime-evaluated-base-classes = [
+    "pydantic.BaseModel",
+    "typing.TypedDict",  # Needed by fastapi
+    "typing_extensions.TypedDict",  # Needed by fastapi
+]
+pydocstyle.convention = "google"
+select = ["ALL"]
+ignore = [
+    "C90", # McCabe complexity
+    "CPY", # Missing copyright
+    "COM812", # Messes with the formatter
+    "ERA", # Eradicate commented-out code
+    "FIX002", # Line contains TODO
+    "ISC001", # Messes with the formatter
+    "PERF203", # Rarely useful
+    "PLR09", # Too many something (arg, statements, etc)
+    "RUF012", # Pydantic models are currently not well detected. See https://github.com/astral-sh/ruff/issues/13630
+    "TD002", # Missing author in TODO
+    "TD003", # Missing issue link in TODO
+    "TRY301", # A bit too harsh (Abstract `raise` to an inner function)
+    "PLC0415", # Inline imports
+    "D10", # Missing docstrings
+    "PLW1641", # Object does not implement `__hash__` method (mutable objects shouldn't be hashable)
+    # Rules that are TODOs
+    "ANN"
+]
+
+# Preview rules that are not yet activated
+external = ["RUF027"]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/*" = ["D1", "INP", "T201"]
+"src/backend/tests/stress/*" = [
+    "D1",     # Docstrings: this is a manual CLI tool, not a test target
+    "INP001", # Stress tests live outside the unit test package
+    "S101",   # Asserts ok in stress harness
+    "S311",   # Standard PRNG is fine for stress payload jitter
+    "T201",   # Print statements: this is a CLI script
+]
+"scripts/gp/tests/*" = [
+    "D1",      # Missing docstrings
+    "PLR2004", # Magic value comparisons
+    "S101",    # Use of assert (required for pytest)
+    "TRY003",  # Long exception messages
+    "EM101",   # String literals in exceptions
+]
+"scripts/ci/test_*.py" = [
+    "D1",      # Missing docstrings
+    "PLR2004", # Magic value comparisons
+    "S101",    # Use of assert (required for pytest)
+    "TRY003",  # Long exception messages
+    "EM101",   # String literals in exceptions
+]
+"src/backend/base/flowos/alembic/versions/*" = ["INP001", "D415", "PGH003"]
+"src/backend/base/flowos/custom/__init__.py" = [
+    "I001",  # Import order affects initialization - must import custom module first
+]
+"src/backend/base/flowos/api/v1/*" = [
+    "TCH",  # FastAPI needs to evaluate types at runtime
+]
+"src/backend/base/flowos/api/v2/*" = [
+    "TCH",  # FastAPI needs to evaluate types at runtime
+]
+"src/backend/base/flowos/__main__.py" = [
+    "B008",  # Typer CLI requires function calls in defaults
+]
+"src/backend/base/flowos/services/cache/*" = [
+    "S301",  # Pickle usage is intentional for caching
+]
+"src/backend/base/flowos/services/tracing/*" = [
+    "SLF001",  # Third-party library private member access (langwatch, opik)
+]
+"src/flowos-core/src/flowos_core/base/curl/parse.py" = [
+    "S105",  # False positive: 'token' variable name, not a password
+]
+"src/flowos-core/src/flowos_core/services/auth/service.py" = [
+    "ARG002",  # No-op impl: unused args required by interface
+    "EM101",  # NotImplementedError messages as literals
+    "TC003",  # Type-only imports used in signatures
+]
+"src/flowos-core/src/flowos_core/base/mcp/util.py" = [
+    "SLF001",  # MCP library private member access
+]
+"src/flowos-core/src/flowos_core/cli/common.py" = [
+    "S104",  # Intentional binding to all interfaces for server
+    "S105",  # False positive: GITHUB_TOKEN_ENV is an env var name
+]
+"src/flowos-core/src/flowos_core/cli/upgrade.py" = [
+    "TC003",  # Path is used at runtime, not just in type hints
+]
+"src/flowos-core/src/flowos_core/components/__init__.py" = [
+    "SLF001",  # Accessing _dynamic_imports from modules
+]
+"src/flowos-core/src/flowos_core/components/data/save_file.py" = [
+    "SLF001",  # Google API client private member access
+]
+"src/flowos-core/src/flowos_core/components/datastax/astradb_vectorstore.py" = [
+    "S110",  # Try-except-pass for optional metadata
+]
+"src/flowos-core/src/flowos_core/components/google/google_generative_ai_embeddings.py" = [
+    "SLF001",  # Google AI library private member access
+]
+"src/flowos-core/src/flowos_core/components/knowledge_bases/retrieval.py" = [
+    "SLF001",  # Chroma client private member access
+]
+"src/flowos-core/src/flowos_core/components/mongodb/mongodb_atlas.py" = [
+    "SLF001",  # MongoDB collection private member access
+]
+"src/flowos-core/src/flowos_core/components/tools/{python_code_structured_tool.py,searxng.py}" = [
+    "S102",  # Use of exec/eval for dynamic code execution
+    "SLF001",  # Component internal member access
+]
+"src/flowos-core/src/flowos_core/components/vectorstores/astradb.py" = [
+    "S110",  # Try-except-pass for optional metadata
+]
+"src/flowos-core/src/flowos_core/custom/{code_parser/code_parser.py,validate.py}" = [
+    "S102",  # Use of exec for code validation
+]
+"src/flowos-core/src/flowos_core/custom/custom_component/component.py" = [
+    "SLF001",  # Component internal state management
+]
+"src/flowos-core/src/flowos_core/custom/directory_reader/directory_reader.py" = [
+    "SLF001",  # Component introspection
+]
+"src/flowos-core/src/flowos_core/custom/utils.py" = [
+    "SLF001",  # Component code analysis
+]
+"src/flowos-core/src/flowos_core/graph/graph/ascii.py" = [
+    "SLF001",  # Grandalf library private member access
+]
+"src/flowos-core/src/flowos_core/inputs/input_mixin.py" = [
+    "S105",  # False positive: PASSWORD is a type constant
+]
+"src/flowos-core/src/flowos_core/__main__.py" = [
+    "B008",   # Typer CLI requires function calls in argument defaults
+    "FBT001", # Bool flags are the standard typer pattern
+    "FBT003", # Boolean positional values in typer.Option() calls
+]
+"src/flowos-core/src/flowos_core/cli/_setup_commands.py" = [
+    "B008",   # Typer CLI requires function calls in argument defaults
+    "FBT001", # Bool flags are the standard typer pattern
+    "FBT003", # Boolean positional values in typer.Option() calls
+]
+"src/flowos-core/src/flowos_core/cli/_authoring_commands.py" = [
+    "B008",   # Typer CLI requires function calls in argument defaults
+    "FBT001", # Bool flags are the standard typer pattern
+    "FBT003", # Boolean positional values in typer.Option() calls
+]
+"src/flowos-core/src/flowos_core/cli/_running_commands.py" = [
+    "B008",   # Typer CLI requires function calls in argument defaults
+    "FBT001", # Bool flags are the standard typer pattern
+    "FBT003", # Boolean positional values in typer.Option() calls
+]
+"src/flowos-core/src/flowos_core/cli/_remote_commands.py" = [
+    "B008",   # Typer CLI requires function calls in argument defaults
+    "FBT001", # Bool flags are the standard typer pattern
+    "FBT003", # Boolean positional values in typer.Option() calls
+]
+"src/backend/base/flowos/api/utils/*" = [
+    "TCH",  # Imports are used at runtime (FastAPI deps, SQLAlchemy queries, model constructors)
+]
+"src/sdk/src/flowos_sdk/_http.py" = [
+    "TCH",  # httpx is used at runtime (response object methods)
+]
+"src/sdk/src/flowos_sdk/environments.py" = [
+    "TRY003", # Contextual error messages are necessary here
+    "EM102",  # f-string messages assigned before raise where possible
+]
+"src/sdk/tests/*" = [
+    "S101",   # assert is the standard pytest assertion style
+    "INP001", # Not a package namespace issue in tests
+    "TC003",  # pytest fixture type hints are evaluated at runtime
+]
+"src/flowos-core/src/flowos_core/schema/table.py" = [
+    "S105",  # False positive: PASSWORD is a formatter type
+]
+"src/flowos-core/src/flowos_core/services/mcp_composer/service.py" = [
+    "S104",  # Intentional binding to all interfaces for server
+    "S110",  # Try-except-pass for optional error logging
+]
+"src/backend/tests/*" = [
+    "D1",
+    "PLR2004",
+    "S101",
+    "SLF001",
+    "BLE001",  # allow broad-exception catching in tests
+]
+"src/backend/base/flowos/tests/*" = [
+    "D1",
+    "PLR2004",
+    "S101",
+    "SLF001",
+    "BLE001",  # allow broad-exception catching in tests
+]
+"src/flowos-core/tests/*" = [
+    "D1",
+    "PLR2004",
+    "S101",
+    "SLF001",
+    "BLE001",  # allow broad-exception catching in tests
+    "S104",    # Binding to all interfaces (test servers)
+    "S108",    # Insecure temp file usage (safe in tests)
+]
+"src/bundles/*/tests/*" = [
+    "D1",
+    "PLR2004",
+    "S101",
+    "SLF001",
+    "BLE001",  # allow broad-exception catching in tests
+    "S104",    # Binding to all interfaces (test servers)
+    "S108",    # Insecure temp file usage (safe in tests)
+    "INP001",  # Bundle test dirs are not import packages
+]
+"src/backend/tests/locust/*" = [
+    "D1",      # Missing docstrings (CLI tools don't need full docstrings)
+    "T201",    # Print statements (needed for CLI output)
+    "S603",    # Subprocess calls (needed for running commands)
+    "S607",    # Starting process with partial executable path
+    "S104",    # Binding to all interfaces (needed for FlowOS server)
+    "S105",    # Hardcoded passwords (test credentials)
+    "FBT001",  # Boolean-typed positional arguments (common in CLI)
+    "FBT002",  # Boolean default arguments (common in CLI tools)
+    "TRY002",  # Custom exceptions (generic exceptions OK for CLI)
+    "TRY003",  # Long exception messages (descriptive errors for users)
+    "TRY300",  # Consider moving to else block (return patterns)
+    "EM101",   # String literals in exceptions (user-facing messages)
+    "EM102",   # F-string literals in exceptions (user-facing messages)
+    "EXE001",  # Shebang without executable (may be run via python)
+    "D415",    # First line punctuation (CLI docstrings)
+    "F401",    # Unused imports (imports for availability checking)
+    "PTH123",  # Use Path.open (open() is fine for simple cases)
+    "PTH107",  # Use Path.unlink (os.remove is fine for simple cases)
+    "PTH207",  # Use Path.glob (glob.glob is fine for simple cases)
+    "B007",    # Unused loop variables (tuple unpacking)
+    "PLW0602", # Global variable usage (needed for locust state)
+    "PLW0603", # Global variable updates (needed for locust state)
+    "DTZ005",  # Datetime without timezone (local time is fine for logs)
+    "G004",    # Logging f-strings (detailed error logging)
+    "SIM102",  # Nested if statements (readability over optimization)
+    "E501",    # Line too long (some CLI commands are naturally long)
+]
+
+[tool.ruff.lint.flake8-builtins]
+builtins-allowed-modules = [ "io", "logging", "socket"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

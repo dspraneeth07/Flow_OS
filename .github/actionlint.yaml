@@ -1,0 +1,4 @@
+self-hosted-runner:
+  labels:
+    - flowos-ai-arm64-40gb-ephemeral
+    - FlowOS-runner

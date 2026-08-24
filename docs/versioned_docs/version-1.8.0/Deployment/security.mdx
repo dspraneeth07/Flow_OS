@@ -1,0 +1,63 @@
+---
+title: Security
+slug: /security
+---
+
+The FlowOS UI is an IDE and code execution platform, which means that FlowOS is inherently capable of executing arbitrary,
+developer-provided code.
+By design, the FlowOS UI includes a code editor allowing developers to author and execute arbitrary Python with full access to the host
+FlowOS backend process, filesystem, and network.
+In addition, some components wrap and use code execution, including use of AI models to generate code to be executed based
+on user input.
+
+FlowOS neither enforces isolation between users within a single FlowOS process, nor restricts access to the local disk or network resources. Flow visibility and user access controls are designed for usability, not security enforcement. Users can access underlying database connections and system resources directly. For multi-tenant deployments, FlowOS relies on infrastructure-level security rather than application-level isolation, which means it is your responsibility to enforce tenant isolation.
+
+:::warning
+You are responsible for the following:
+
+* Enforcing comprehensive infrastructure isolation.
+* Running flows safely, particularly flows that use LLM-generated code or user inputs that could contain user-submitted code.
+* Ensuring that end-user interactions with FlowOS-backed APIs are secure from end-to-end, including data at rest and in transit.
+:::
+
+## Secure FlowOS during local development
+
+FlowOS is a code execution platform with full access to your local system.
+You are responsible for ensuring the safety of flows you execute.
+
+In the event that FlowOS could execute untrusted or LLM-generated code, consider using isolated or containerized execution environments. For more information, see [Containerize a FlowOS application](/develop-application).
+
+## Secure first-party deployments
+
+When you are serving APIs backed by flows that you or your organization authored, you are responsible for ensuring FlowOS-based APIs provide security to your end users.
+
+Follow industry best practices for APIs:
+
+* Use a secure API gateway to provide authentication and authorization
+* Ensure user data is appropriately isolated
+* Sanitize inputs and outputs against XSS and injection attacks, including regex patterns to prevent ReDoS vulnerabilities
+
+For more information on setting up a reverse proxy, see [Deploy FlowOS with Nginx and SSL](/deployment-nginx-ssl).
+For more information on authentication configuration, see [API keys and authentication](/api-keys-and-authentication).
+
+## Secure third-party deployments
+
+If you provide FlowOS as a service to third parties, you must assume that any code executed by FlowOS could be potentially malicious.
+
+FlowOS provides no isolation between tenants, so it's your responsibility to enforce isolation at the infrastructure level.
+
+* Use process-level isolation to prevent tenants from sharing a single FlowOS process.
+* Use disk-level isolation to prevent shared access to writable persistent storage.
+* Use network-level isolation to prevent access to private networks.
+* Use database-level isolation to prevent access to or modification of shared database resources.
+
+Authentication and authorization must be provided and enforced outside of the FlowOS container.
+For shared services, such as databases, enforce access limitations externally through credentials and security policies.
+
+For more information, see [Best practices for FlowOS on Kubernetes](/deployment-prod-best-practices).
+
+## Security bulletin
+
+For the most up-to-date information about security vulnerabilities, fixes, and CVEs, see the [FlowOS Security Policy](https://github.com/flowos-ai/flowos/blob/main/SECURITY.md) and [FlowOS GitHub Security Advisories](https://github.com/flowos-ai/flowos/security/advisories).
+
+If you discover a security vulnerability in FlowOS, the FlowOS team encourages you to report it responsibly through the [GitHub Security tab](https://github.com/flowos-ai/flowos/security). Please don't publicly disclose vulnerabilities until they have been assessed and resolved.

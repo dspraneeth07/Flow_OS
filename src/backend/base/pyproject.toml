@@ -1,0 +1,554 @@
+[project]
+name = "flowos-base"
+version = "0.1.1"
+description = "A Python package with a built-in web application"
+requires-python = ">=3.10,<3.15"
+license = "MIT"
+keywords = ["nlp", "langchain", "openai", "gpt", "gui"]
+readme = "README.md"
+maintainers = [
+    { name = "Atlantic AI Labs", email = "kishor@techmaticsys.com" },
+]
+
+dependencies = [
+    "flowos-core~=0.1.1",
+    "fastapi>=0.135.0,<1.0.0",
+    "slowapi>=0.1.9,<1.0.0",
+    "httpx[http2]>=0.27,<1.0.0",
+    "aiofile>=3.9.0,<4.0.0",
+    "uvicorn>=0.30.0,<1.0.0",
+    "gunicorn>=25.3.0,<27.0.0",
+    "langchain~=1.3.0",
+    "langchain-community~=0.4.1",
+    "langchain-mongodb>=0.11.0",
+    "langchain-perplexity>=1.0.0,<2.0.0",
+    "langchain-qdrant>=1.0.0,<2.0.0",
+    "langchain-weaviate>=0.0.6",
+    "langchain-core>=1.3.3,<2.0.0",
+    "langchainhub~=0.1.15",
+    "loguru>=0.7.1,<1.0.0",
+    "structlog>=25.4.0,<26.0.0",
+    "rich>=13.7.0,<14.0.0",
+    "langchain-experimental~=0.4.1",
+    "sqlmodel~=0.0.37",
+    "pydantic>=2.13.0,<3.0.0",
+    "pydantic-settings>=2.2.0,<3.0.0",
+    "email-validator>=2.0.0",
+    "typer>=0.13.0,<1.0.0",
+    "cachetools>=6.0.0",
+    "platformdirs>=4.2.0,<5.0.0",
+    "python-multipart>=0.0.12,<1.0.0",
+    "orjson>=3.11.6,<4.0.0",
+    "alembic>=1.13.0,<2.0.0",
+    "passlib>=1.7.4,<2.0.0",
+    "bcrypt==4.0.1",
+    "pillow>=12.1.1,<13.0.0",
+    "docstring-parser>=0.16,<1.0.0",
+    "PyJWT>=2.12.1",
+    "pandas>=2.2.3",
+    "multiprocess>=0.70.14,<1.0.0",
+    "duckdb>=1.0.0,<2.0.0",
+    "python-docx>=1.1.0,<2.0.0",
+    "jq>=1.7.0,<2.0.0; sys_platform != 'win32'",
+    "nest-asyncio>=1.6.0,<2.0.0",
+    "emoji>=2.12.0,<3.0.0",
+    "cryptography>=48.0.1",
+    "asyncer>=0.0.5,<1.0.0",
+    "pyperclip>=1.8.2,<2.0.0",
+    "uncurl>=0.0.11,<1.0.0",
+    "sentry-sdk[fastapi,loguru]>=2.5.1,<3.0.0",
+    "chardet>=7.3.0",
+    "firecrawl-py>=1.0.16,<2.0.0",
+    "opentelemetry-api>=1.30.0,<2.0.0",
+    "opentelemetry-sdk>=1.30.0,<2.0.0",
+    "opentelemetry-exporter-prometheus>=0.50b0,<1.0.0",
+    "opentelemetry-exporter-otlp>=1.30.0,<2.0.0",
+    "opentelemetry-instrumentation-fastapi>=0.50b0,<1.0.0",
+    "opentelemetry-instrumentation-requests>=0.50b0,<1.0.0",
+    "opentelemetry-instrumentation-urllib3>=0.50b0,<1.0.0",
+    "prometheus-client>=0.20.0,<1.0.0",
+    "aiofiles>=24.1.0,<25.0.0",
+    "pip>=26.0.0,<27.0.0",
+    "setuptools>=80.0.0,<81.0.0",
+    "nanoid>=2.0.0,<3.0.0",
+    "filelock>=3.20.1,<4.0.0",
+    "grandalf>=0.8.0,<1.0.0",
+    "spider-client>=0.0.27,<1.0.0",
+    "clickhouse-connect==0.7.19",
+    "assemblyai>=0.33.0,<1.0.0",
+    "fastapi-pagination>=0.13.1,<1.0.0",
+    "defusedxml>=0.7.1,<1.0.0",
+    "pypdf>=6.10.0,<7.0.0",
+    "validators>=0.34.0,<1.0.0",
+    "networkx>=3.4.2,<4.0.0",
+    "json-repair>=0.30.3,<1.0.0",
+    "mcp>=1.17.0,<2.0.0",
+    "aiosqlite>=0.20.0,<1.0.0",
+    "greenlet>=3.1.1,<4.0.0",
+    "jsonquerylang>=1.1.1,<2.0.0",
+    "sqlalchemy[aiosqlite]>=2.0.38,<3.0.0",
+    'elevenlabs==1.58.1; python_version == "3.12"',
+    'elevenlabs>=1.52.0,<2.0.0; python_version != "3.12"',
+    "scipy>=1.15.2,<2.0.0",
+    "ibm-watsonx-ai>=1.3.1,<2.0.0",
+    "langchain-ibm~=1.1.0",
+    "trustcall>=0.0.38,<1.0.0",
+    "langchain-chroma~=0.2.6",
+    "jaraco-context>=6.1.0",
+    "wheel>=0.46.2,<1.0.0",
+    "onnxruntime>=1.20,<1.24; python_version<'3.14'", # >=1.24 does not support Python 3.10; allow 1.23.x for agent-lifecycle-toolkit compatibility
+    "onnxruntime>=1.26; python_version>='3.14'",
+    "dynaconf>=3.2.13,<4.0.0",
+    "pyasn1>=0.6.3,<0.7.0",
+    "langgraph-checkpoint>4.0.0,<5.0.0",
+    "transformers>=5.6.0,<6.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "asgi-lifespan>=2.1.0",
+    "pytest-github-actions-annotate-failures>=0.2.0",
+    "ipykernel>=6.29.0",
+    "ruff>=0.12.7",
+    "httpx[http2]>=0.27",
+    "pytest>=9.0.3",
+    "requests>=2.33.0",
+    "pytest-cov>=5.0.0",
+    "pytest-mock>=3.14.0",
+    "pytest-xdist>=3.6.0",
+    "pytest-sugar>=1.0.0",
+    "respx>=0.21.1",
+    "pytest-instafail>=0.5.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-profiling>=1.7.0",
+    "pre-commit>=3.7.0",
+    "vulture>=2.11",
+    "dictdiffer>=0.9.0",
+    "pytest-split>=0.9.0",
+    "devtools>=0.12.2",
+    "pytest-flakefinder>=1.1.0",
+    "types-markdown>=3.7.0.20240822",
+    "codeflash>=0.8.4",
+    "fakeredis>=2.0.0",
+]
+
+
+[tool.hatch.build.targets.wheel]
+packages = ["flowos"]
+
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+#addopts = "-ra"
+testpaths = ["tests", "integration"]
+console_output_style = "progress"
+filterwarnings = ["ignore::DeprecationWarning"]
+log_cli = true
+markers = ["async_test"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.codeflash]
+# All paths are relative to this pyproject.toml's directory.
+module-root = "flowos"
+tests-root = "../tests/unit"
+test-framework = "pytest"
+ignore-paths = ["flowos/components/"]
+formatter-cmds = ["ruff check --exit-zero --fix $file", "ruff format $file"]
+# disable plugins that might interfere with runtime measurement
+pytest-cmd = "pytest -p no:profiling -p no:sugar -p no:xdist -p no:cov -p no:split"
+
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.urls]
+Repository = "https://github.com/dspraneeth07/FlowOS"
+Documentation = "https://github.com/dspraneeth07/FlowOS"
+# Optional dependencies
+[project.optional-dependencies]
+audio = [
+    "webrtcvad>=2.0.10",
+]
+
+postgresql = [
+    "sqlalchemy[postgresql_psycopg2binary]>=2.0.38,<3.0.0",
+    "sqlalchemy[postgresql_psycopg]>=2.0.38,<3.0.0",
+]
+
+local = [
+    "sentence-transformers>=2.0.0",
+    "ctransformers>=0.2"
+]
+
+# Individual database providers
+couchbase = ["couchbase>=4.2.1"]
+cassandra = ["cassio>=0.1.7"]
+clickhouse = ["clickhouse-connect==0.7.19"]
+
+
+mongodb = ["pymongo>=4.10.1"]
+supabase = ["supabase>=2.6.0,<3.0.0"]
+redis = ["redis>=7.4.0,<8.0.0"]
+elasticsearch = ["elasticsearch~=8.19", "langchain-elasticsearch~=1.0.0"]
+
+# Individual vector store providers
+faiss = [
+    "faiss-cpu==1.9.0.post1; python_version<'3.14'",
+    "faiss-cpu>=1.13.2; python_version>='3.14'",
+]
+qdrant = ["qdrant-client>=1.12.0,<2.0.0"]
+qdrant-vectors = ["langchain-qdrant>=1.0.0,<2.0.0"]
+weaviate = ["weaviate-client>=4.10.2,<5.0.0"]
+chroma = [
+    "chromadb>=1.0.0,<2.0.0",
+    "langchain-chroma~=0.2.6"
+]
+upstash = ["upstash-vector==0.6.0"]
+pinecone = ["langchain-pinecone~=0.2.13; python_version < '3.14'"]
+milvus = ["langchain-milvus~=0.3.2"]
+mongodb-vectors = ["langchain-mongodb>=0.11.0"]
+astradb = ["langchain-astradb~=1.0.0"]
+
+# Individual LLM providers
+openai = ["langchain-openai>=1.1.6", "openai>=1.68.2,<3.0.0"]
+anthropic = ["langchain-anthropic~=1.4.6"]
+cohere = ["langchain-cohere~=0.5.0"]
+google = [
+    "langchain-google-genai~=4.1.2",
+    "langchain-google-vertexai>=3.2.0",
+    "langchain-google-community~=3.0.2",
+    "langchain-google-calendar-tools~=0.0.1",
+    "google-api-python-client~=2.161",
+]
+ollama = ["langchain-ollama~=0.3.10"]
+nvidia = ["langchain-nvidia-ai-endpoints~=1.0.0"]
+mistral = ["langchain-mistralai~=1.1.1"]
+sambanova = ["langchain-sambanova~=1.0.0"]
+groq = ["langchain-groq~=1.1.1"]
+
+# Individual local LLM providers
+sentence-transformers = ["sentence-transformers>=2.3.1"]
+ctransformers = ["ctransformers>=0.2.10"]
+
+# Individual monitoring providers
+# pydantic>=2.13 is required because langfuse v3 imports pydantic.v1.BaseModel,
+# which only supports Python 3.14 from pydantic 2.13 onward. Without this guard
+# the langfuse SDK raises pydantic.v1.errors.ConfigError on import in Python
+# 3.14 environments (e.g. the official Docker image), causing tracing to
+# silently no-op. See https://github.com/dspraneeth07/FlowOS/issues/13317.
+langfuse = ["langfuse~=3.8", "pydantic>=2.13.0"]
+langwatch = ["langwatch~=0.10.0; python_version < '3.14'"]
+langsmith = ["langsmith>=0.3.42,<1.0.0"]
+arize = ["arize-phoenix-otel>=0.6.1"]
+
+# Individual document loaders
+pypdf = ["pypdf>=6.10.0,<7.0.0"]
+docx = ["python-docx>=1.1.0"]
+pytube = ["pytube==15.0.0"]
+
+# Individual agent frameworks
+# crewai is commented out due to httpx version conflict
+# crewai = ["crewai>=0.126.0"]
+smolagents = ["smolagents>=1.8.0"]
+opendsstar = [
+    "OpenDsStar==1.0.26; python_version >= '3.11' and python_version < '3.14' and (sys_platform != 'darwin' or platform_machine != 'x86_64')",
+]
+
+# Individual tools
+beautifulsoup = ["beautifulsoup4==4.12.3"]
+serpapi = ["google-search-results>=2.4.1,<3.0.0"]
+google-api = ["google-api-python-client~=2.161"]
+wikipedia = ["wikipedia==1.4.0"]
+fake-useragent = ["fake-useragent>=2.0.0"]
+# duckduckgo: the runtime dep for the extracted flowos-duckduckgo bundle.
+# Public consumers should install flowos-duckduckgo directly (pip-installing
+# flowos-base no longer pulls in ddgs by default).  The extra remains
+# defined here so docker/build_and_push_base.Dockerfile can route ddgs
+# through the locked sync (``uv sync --extra duckduckgo``) instead of an
+# unpinned ``uv pip install ddgs`` that would silently drift across
+# rebuilds.  Keep the version range in lockstep with the bundle's
+# pyproject so the lockfile resolves a single ddgs version.
+duckduckgo = ["ddgs>=9.0.0"]
+yfinance = ["yfinance==0.2.50"]
+wolframalpha = ["wolframalpha==5.1.3"]
+
+# Individual utilities
+pyarrow = ["pyarrow>=23.0.1,<24.0.0"]
+fastavro = [
+    'fastavro==1.9.7; python_version < "3.13"',
+    'fastavro>=1.9.8,<2.0.0; python_version >= "3.13"',
+]
+gitpython = ["GitPython>=3.1.50"]
+nltk = ["nltk>=3.9.4"]
+lark = ["lark==1.2.2"]
+
+# Additional dependencies from requirements
+huggingface = ["huggingface-hub[inference]>=1.0.0,<2.0.0"]
+metaphor = ["metaphor-python==0.1.23"]
+metal = ["metal_sdk==2.5.1"]
+markup = ["MarkupSafe==3.0.2"]
+aws = ["boto3>=1.34.162,<2.0.0", "langchain-aws~=1.1.0"]
+numexpr = ["numexpr>=2.10.2"]
+qianfan = ["qianfan==0.3.5"]
+pgvector = ["pgvector>=0.4.2"]
+litellm = [
+    # litellm has no Python 3.14-compatible release: every version from 1.83.8
+    # onward declares Requires-Python <3.14, so nothing satisfying our >=1.85.1
+    # floor installs on 3.14 (the newest 3.14-installable litellm is 1.83.7).
+    # Gate it off on 3.14 so `pip install flowos` resolves there instead of
+    # dead-ending; drop the marker once upstream ships a 3.14-compatible litellm.
+    #
+    # Capped below 1.92: litellm 1.92.0 became a mixed Python/Rust project and
+    # ships manylinux wheels ONLY. On Windows and macOS there is no wheel, so pip
+    # falls back to the sdist and the install dies compiling Rust
+    # ("error: linker `link.exe` not found" / missing MSVC or cargo).
+    # 1.91.x is still a pure-Python `py3-none-any` wheel, so it installs on
+    # Windows, macOS and Linux alike. Raise this cap once litellm ships
+    # cross-platform wheels again.
+    "litellm>=1.85.1,<1.92; python_version < '3.14'",
+    # Runtime deps from litellm[proxy] that flowos-ide hits when logging
+    # to langfuse via litellm.proxy.proxy_server (issue #12228). The full
+    # [proxy] extra pins boto3==1.43.1, which conflicts with our aioboto3
+    # transitive cap, so we pull in just the missing modules instead.
+    "apscheduler>=3.10.4,<4.0.0",
+    "cryptography",
+]
+zep = ["zep-python==2.0.2"]
+youtube = ["youtube-transcript-api>=1.0.0,<2.0.0"]
+markdown = ["Markdown>=3.8.0"]
+kubernetes = ["kubernetes==31.0.0"]
+json-repair = ["json_repair==0.30.3"]
+composio = [
+    "composio==0.16.0",
+    "composio-langchain==0.16.0"
+]
+ragstack = ["ragstack-ai-knowledge-store==0.2.1; python_version < '3.13'"]
+opensearch = ["opensearch-py==2.8.0"]
+atlassian = ["atlassian-python-api==3.41.16"]
+mem0 = ["mem0ai>=2.0.2,<3.0.0"]
+needle = ["needle-python>=0.4.0"]
+sseclient = ["sseclient-py==1.8.0"]
+openinference = ["openinference-instrumentation-langchain>=0.1.29"]
+mcp = ["mcp>=1.17.0,<2.0.0"]
+ag2 = ["ag2>=0.1.0"]
+scrapegraph = ["scrapegraph-py>=1.12.0"]
+apify = ["apify-client>=1.8.1"]
+spider = ["spider-client>=0.0.27,<1.0.0"]
+
+# ALTK (Agent Lifecycle Toolkit)
+# Updated to 0.10.1+ for PyTorch 2.6.0 compatibility (addresses torch.load RCE vulnerability)
+# Upper bound prevents breaking changes in future major versions
+# Excluded on macOS x86_64: PyTorch dropped Intel Mac wheel builds after v2.2.2
+# Python 3.14: re-gated off 3.14. altk 0.10.x itself supports 3.14 (requires-python
+# >=3.10) and no longer depends on OpenDsStar, but it depends on litellm<2.0.0, and
+# litellm has no 3.14-compatible release (every version from 1.83.8 on caps at <3.14,
+# see the litellm extra below). Without this gate the resolver pins an uninstallable
+# litellm on 3.14. Re-enable once upstream litellm supports 3.14.
+altk = ["agent-lifecycle-toolkit>=0.10.1,<1.0; (sys_platform != 'darwin' or platform_machine != 'x86_64') and python_version < '3.14'"]
+
+# Toolguard Integration
+# Gated off 3.14: toolguard depends on litellm unconditionally, and litellm has
+# no 3.14-compatible release (see the litellm extra below), so allowing it on
+# 3.14 would drag in an uninstallable / sub-floor litellm. Re-enable once
+# upstream litellm supports 3.14.
+toolguard = ["toolguard>=0.2.20,<1.0.0; python_version < '3.14'"]
+
+# Additional LangChain integrations
+# Excluded on macOS x86_64: transitive torch dependency (via sentence-transformers) has no Intel Mac wheels
+langchain-huggingface = ["langchain-huggingface~=1.2.0; sys_platform != 'darwin' or platform_machine != 'x86_64'"]
+langchain-unstructured = ["langchain-unstructured~=1.0.0"]
+graph-retriever = ["langchain-graph-retriever==0.8.0", "graph-retriever==0.8.0"]
+langchain-mcp-adapters = ["langchain-mcp-adapters>=0.1.14,<0.2.0"]
+
+# Additional monitoring
+# Gated off 3.14: opik depends on litellm unconditionally, and litellm has no
+# 3.14-compatible release (see the litellm extra below), so allowing it on 3.14
+# would drag in an uninstallable / sub-floor litellm. Re-enable once upstream
+# litellm supports 3.14.
+opik = ["opik>=2.0.0,<3.0.0; python_version < '3.14'"]
+traceloop = ["traceloop-sdk>=0.43.1,<1.0.0"]
+openlayer = ["openlayer>=0.9.0,<1.0.0"]
+
+# Document processing / OCR
+docling = [
+    "docling-core>=2.77.0,<3.0.0",
+    "docling-slim[cli,convert-core,extract-core,feat-ocr-rapidocr,format-latex,format-office,format-pdf,format-web,models-local,service-client]>=2.36.1,<3.0.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+]
+docling-chunking = [
+    "flowos-base[docling]",
+    "docling-core[chunking]>=2.77.0,<3.0.0",
+    "tiktoken>=0.7.0",
+]
+docling-image-description = [
+    "flowos-base[docling]",
+    "langchain-docling>=1.1.0",
+]
+
+easyocr = ["easyocr>=1.7.2,<2.0.0; sys_platform != 'darwin' or platform_machine != 'x86_64'"]
+
+# Additional tools
+cleanlab = ["cleanlab-tlm>=1.1.2,<2.0.0"]
+twelvelabs = ["twelvelabs>=0.4.7,<1.0.0"]
+jigsawstack = ["jigsawstack==0.2.7"]
+assemblyai = ["assemblyai==0.35.1"]
+
+# Data processing
+datasets = ["datasets>2.14.7,<5.0.0"]
+fastparquet = ["fastparquet>=2024.11.0,<2025.0.0"]
+
+# Vision / ML
+vlmrun = ["vlmrun[all]>=0.2.0"]
+cuga = [
+    "cuga>=0.2.20,<0.3.0; sys_platform != 'darwin' and python_version < '3.14'",
+    "cuga>=0.2.20,<0.3.0; sys_platform == 'darwin' and platform_machine == 'arm64' and python_version < '3.14'",
+]
+mlx = [
+    "mlx>=0.29.0; sys_platform == 'darwin' and platform_machine == 'arm64' and python_version >= '3.12'",
+    "mlx-vlm~=0.3.9; sys_platform == 'darwin' and platform_machine == 'arm64' and python_version >= '3.12'",
+]
+
+# MCP
+fastmcp = ["fastmcp>=3.2.0"]
+
+# AWS extras
+aioboto3 = ["aioboto3>=15.2.0,<16.0.0"]
+
+# Astra
+astrapy = ["astrapy>=2.1.0,<3.0.0"]
+
+# Windows-specific
+gassist = ["gassist>=0.0.1; sys_platform == 'win32'"]
+
+# SDKs for IBM watsonx Orchestrate deployment adapter.
+ibm-watsonx-clients = [
+    "ibm-cloud-sdk-core~=3.24.4",
+    "ibm-watsonx-orchestrate-core~=2.8.0; python_version >= '3.11' and python_version < '3.14'",
+    "ibm-watsonx-orchestrate-clients~=2.8.0; python_version >= '3.11' and python_version < '3.14'",
+]
+
+complete = [
+    "flowos-base[couchbase]",
+    "flowos-base[cassandra]",
+    "flowos-base[clickhouse]",
+    "flowos-base[mongodb]",
+    "flowos-base[supabase]",
+    "flowos-base[redis]",
+    "flowos-base[elasticsearch]",
+    "flowos-base[faiss]",
+    "flowos-base[qdrant]",
+    "flowos-base[qdrant-vectors]",
+    "flowos-base[weaviate]",
+    "flowos-base[chroma]",
+    "flowos-base[upstash]",
+    "flowos-base[pinecone]",
+    "flowos-base[milvus]",
+    "flowos-base[mongodb-vectors]",
+    "flowos-base[astradb]",
+    "flowos-base[openai]",
+    "flowos-base[anthropic]",
+    "flowos-base[cohere]",
+    "flowos-base[google]",
+    "flowos-base[ollama]",
+    "flowos-base[nvidia]",
+    "flowos-base[mistral]",
+    "flowos-base[sambanova]",
+    "flowos-base[groq]",
+    "flowos-base[langfuse]",
+    "flowos-base[langwatch]",
+    "flowos-base[langsmith]",
+    "flowos-base[arize]",
+    "flowos-base[pypdf]",
+    "flowos-base[docx]",
+    "flowos-base[pytube]",
+    # "flowos-base[crewai]",  # commented out due to httpx version conflict
+    "flowos-base[smolagents]",
+    "flowos-base[opendsstar]",
+    "flowos-base[beautifulsoup]",
+    "flowos-base[serpapi]",
+    "flowos-base[google-api]",
+    "flowos-base[wikipedia]",
+    "flowos-base[fake-useragent]",
+    # duckduckgo was an extra of flowos-base; it has been moved to
+    # the standalone flowos-duckduckgo bundle (now a regular dep of flowos).
+    "flowos-base[yfinance]",
+    "flowos-base[wolframalpha]",
+    "flowos-base[pyarrow]",
+    "flowos-base[fastavro]",
+    "flowos-base[gitpython]",
+    "flowos-base[nltk]",
+    "flowos-base[lark]",
+    "flowos-base[huggingface]",
+    "flowos-base[metaphor]",
+    "flowos-base[metal]",
+    "flowos-base[markup]",
+    "flowos-base[aws]",
+    "flowos-base[numexpr]",
+    "flowos-base[qianfan]",
+    "flowos-base[pgvector]",
+    "flowos-base[litellm]",
+    "flowos-base[zep]",
+    "flowos-base[youtube]",
+    "flowos-base[markdown]",
+    "flowos-base[kubernetes]",
+    "flowos-base[json-repair]",
+    "flowos-base[composio]",
+    "flowos-base[ragstack]",
+    "flowos-base[opensearch]",
+    "flowos-base[atlassian]",
+    "flowos-base[mem0]",
+    "flowos-base[needle]",
+    "flowos-base[sseclient]",
+    "flowos-base[openinference]",
+    "flowos-base[mcp]",
+    "flowos-base[ag2]",
+    "flowos-base[scrapegraph]",
+    "flowos-base[apify]",
+    "flowos-base[spider]",
+    # ALTK
+    "flowos-base[altk]",
+    # Toolguard
+    "flowos-base[toolguard]",
+    # Additional LangChain integrations
+    "flowos-base[langchain-huggingface]",
+    "flowos-base[langchain-unstructured]",
+    "flowos-base[graph-retriever]",
+    "flowos-base[langchain-mcp-adapters]",
+    # Additional monitoring
+    "flowos-base[opik]",
+    "flowos-base[traceloop]",
+    "flowos-base[openlayer]",
+    # Document processing / OCR
+    "flowos-base[docling]",
+    "flowos-base[easyocr]",
+    # Additional tools
+    "flowos-base[cleanlab]",
+    "flowos-base[twelvelabs]",
+    "flowos-base[jigsawstack]",
+    "flowos-base[assemblyai]",
+    # Data processing
+    "flowos-base[datasets]",
+    "flowos-base[fastparquet]",
+    # Vision / ML
+    "flowos-base[vlmrun]",
+    "flowos-base[cuga]",
+    "flowos-base[mlx]",
+    # MCP
+    "flowos-base[fastmcp]",
+    # AWS extras
+    "flowos-base[aioboto3]",
+    # Astra
+    "flowos-base[astrapy]",
+    # Windows-specific
+    "flowos-base[gassist]",
+    # wxO deployment adapter,
+    "flowos-base[ibm-watsonx-clients]"
+]
+
+all = [
+    "flowos-base[complete]",
+]
+
+[project.scripts]
+flowos-base = "flowos.flowos_launcher:main"

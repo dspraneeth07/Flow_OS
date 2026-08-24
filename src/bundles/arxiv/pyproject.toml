@@ -1,0 +1,53 @@
+[project]
+name = "flowos-arxiv"
+version = "0.1.1"
+description = "arXiv search component as a standalone FlowOS Extension Bundle."
+readme = "README.md"
+requires-python = ">=3.10,<3.15"
+license = { text = "MIT" }
+authors = [
+    { name = "FlowOS", email = "contact@flowos.org" },
+]
+keywords = ["flowos", "flowos_core", "extension", "bundle", "arxiv", "search"]
+
+# Runtime deps: flowos_core (the BUNDLE_API surface) plus defusedxml for safe XML
+# parsing (the arxiv API returns Atom).  defusedxml is already an flowos_core dep
+# but we list it here as a direct runtime dep so the bundle keeps building
+# even if flowos_core drops it later.
+dependencies = [
+    "flowos-core>=0.1.1",
+    "defusedxml>=0.7.1,<1.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/dspraneeth07/FlowOS"
+Documentation = "https://github.com/dspraneeth07/FlowOS"
+Repository = "https://github.com/dspraneeth07/FlowOS"
+
+# Manifest-shipping distributions are discovered via the
+# ``flowos.extensions`` entry-point.  The value is the dotted path to
+# the package containing ``extension.json`` -- the loader walks
+# ``importlib.metadata.files()`` from there to find the manifest, and
+# falls back to this entry-point for editable installs whose dist.files
+# only surfaces dist-info entries.
+[project.entry-points."flowos.extensions"]
+flowos-arxiv = "flowos_arxiv"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# extension.json + components live inside the flowos_arxiv package so
+# ``importlib.metadata.files(dist)`` finds them and the loader resolves
+# bundles[].path relative to the manifest's directory.
+packages = ["src/flowos_arxiv"]
+include = ["src/flowos_arxiv/extension.json", "src/flowos_arxiv/components/**/*.py"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/flowos_arxiv",
+    "extension.json",
+    "README.md",
+    "pyproject.toml",
+]

@@ -1,0 +1,320 @@
+import { useTranslation } from "react-i18next";
+import { usePostValidateCode } from "@/controllers/API/queries/nodes/use-post-validate-code";
+import { usePostValidateComponentCode } from "@/controllers/API/queries/nodes/use-post-validate-component-code";
+import { useUtilityStore } from "@/stores/utilityStore";
+import { clearHandlesFromAdvancedFields } from "@/utils/reactflowUtils";
+import "ace-builds/src-noconflict/ace";
+import "ace-builds/src-noconflict/ext-language_tools";
+import "ace-builds/src-noconflict/ext-searchbox";
+import "ace-builds/src-noconflict/mode-python";
+import "ace-builds/src-noconflict/theme-github";
+import "ace-builds/src-noconflict/theme-monokai";
+import { cloneDeep } from "lodash";
+import { useEffect, useRef, useState } from "react";
+import AceEditor from "react-ace";
+import type ReactAce from "react-ace/lib/ace";
+import IconComponent from "../../components/common/genericIconComponent";
+import { Button } from "../../components/ui/button";
+import { Input } from "../../components/ui/input";
+import useAlertStore from "../../stores/alertStore";
+import { useDarkStore } from "../../stores/darkStore";
+import type { CodeErrorDataTypeAPI } from "../../types/api";
+import type { codeAreaModalPropsType } from "../../types/components";
+import BaseModal from "../baseModal";
+import ConfirmationModal from "../confirmationModal";
+
+export default function CodeAreaModal({
+  value,
+  setValue,
+  nodeClass,
+  setNodeClass,
+  children,
+  dynamic,
+  readonly = false,
+  open: myOpen,
+  setOpen: mySetOpen,
+  componentId,
+  size = "x-large",
+}: codeAreaModalPropsType): JSX.Element {
+  const { t } = useTranslation();
+  const allowCustomComponents = useUtilityStore(
+    (state) => state.allowCustomComponents,
+  );
+  const isBlocked = !allowCustomComponents;
+
+  const [code, setCode] = useState(value);
+  const [open, setOpen] =
+    mySetOpen !== undefined && myOpen !== undefined
+      ? [myOpen, mySetOpen]
+      : useState(false);
+  const dark = useDarkStore((state) => state.dark);
+  const [height, setHeight] = useState<string | null>(null);
+  const setSuccessData = useAlertStore((state) => state.setSuccessData);
+  const setErrorData = useAlertStore((state) => state.setErrorData);
+  const [openConfirmation, setOpenConfirmation] = useState(false);
+  const codeRef = useRef<ReactAce | null>(null);
+  const { mutate } = usePostValidateCode();
+  const [error, setError] = useState<{
+    detail: CodeErrorDataTypeAPI;
+  } | null>(null);
+
+  const { mutate: validateComponentCode } = usePostValidateComponentCode();
+
+  useEffect(() => {
+    // if nodeClass.template has more fields other than code and dynamic is true
+    // do not run handleClick
+    if (dynamic && Object.keys(nodeClass!.template).length > 2) {
+      return;
+    }
+  }, []);
+
+  function processNonDynamicField() {
+    mutate(
+      { code },
+      {
+        onSuccess: (apiReturn) => {
+          if (apiReturn) {
+            const importsErrors = apiReturn.imports.errors;
+            const funcErrors = apiReturn.function.errors;
+            if (funcErrors.length === 0 && importsErrors.length === 0) {
+              setSuccessData({
+                title: t("success.codeReady"),
+              });
+              setOpen(false);
+              setValue(code);
+            } else {
+              if (funcErrors.length !== 0) {
+                setErrorData({
+                  title: t("errors.function"),
+                  list: funcErrors,
+                });
+              }
+              if (importsErrors.length !== 0) {
+                setErrorData({
+                  title: t("errors.imports"),
+                  list: importsErrors,
+                });
+              }
+            }
+          } else {
+            setErrorData({
+              title: t("errors.generic"),
+            });
+          }
+        },
+        onError: (error) => {
+          setErrorData({
+            title: t("errors.code"),
+            list: [error.response.data.detail],
+          });
+        },
+      },
+    );
+  }
+
+  function processDynamicField() {
+    validateComponentCode(
+      { code, frontend_node: nodeClass! },
+      {
+        onSuccess: ({ data, type }) => {
+          if (data && type) {
+            setValue(code);
+            try {
+              const merged = cloneDeep(data);
+              if (nodeClass?.template && merged?.template) {
+                for (const fieldName of Object.keys(merged.template)) {
+                  if (fieldName === "code") continue;
+                  const existing = nodeClass.template[fieldName];
+                  if (existing && Object.hasOwn(existing, "value")) {
+                    // Preserve the user's current value for this parameter
+                    merged.template[fieldName].value = existing.value;
+                  }
+                }
+              }
+
+              clearHandlesFromAdvancedFields(componentId!, merged);
+              setNodeClass(merged, type);
+            } catch (e) {
+              clearHandlesFromAdvancedFields(componentId!, data);
+              setNodeClass(data, type);
+            }
+            setError({ detail: { error: undefined, traceback: undefined } });
+            setOpen(false);
+          }
+        },
+        onError: (error) => {
+          setError(error.response.data);
+        },
+      },
+    );
+  }
+
+  function processCode() {
+    if (!dynamic) {
+      processNonDynamicField();
+    } else {
+      processDynamicField();
+    }
+  }
+
+  useEffect(() => {
+    // Function to be executed after the state changes
+    const delayedFunction = setTimeout(() => {
+      if (error?.detail?.error !== undefined) {
+        //trigger to update the height, does not really apply any height
+        setHeight("90%");
+      }
+      //600 to happen after the transition of 500ms
+    }, 600);
+
+    // Cleanup function to clear the timeout if the component unmounts or the state changes again
+    return () => {
+      clearTimeout(delayedFunction);
+    };
+  }, [error, setHeight]);
+
+  useEffect(() => {
+    if (!openConfirmation) {
+      codeRef.current?.editor.focus();
+    }
+  }, [openConfirmation]);
+
+  useEffect(() => {
+    setCode(value);
+  }, [value, open]);
+
+  return (
+    <BaseModal
+      onEscapeKeyDown={(e) => {
+        e.preventDefault();
+        if (code === value) {
+          setOpen(false);
+        } else {
+          if (
+            !(
+              codeRef.current?.editor.completer &&
+              "popup" in codeRef.current?.editor.completer &&
+              codeRef.current?.editor.completer.popup &&
+              codeRef.current?.editor.completer.popup.isOpen
+            )
+          ) {
+            setOpenConfirmation(true);
+          }
+        }
+      }}
+      open={open}
+      setOpen={setOpen}
+      size={size as "x-large" | "large" | "medium" | "small"}
+    >
+      <BaseModal.Trigger>{children}</BaseModal.Trigger>
+      <BaseModal.Header description={t("dialog.codePrompt")}>
+        <span className="pr-2"> {t("input.editCodeTitle")} </span>
+        <IconComponent
+          name="prompts"
+          className="h-6 w-6 pl-1 text-primary"
+          aria-hidden="true"
+        />
+      </BaseModal.Header>
+      <BaseModal.Content overflowHidden={true}>
+        <Input
+          value={code}
+          readOnly
+          className="absolute left-[500%] top-[500%]"
+          id="codeValue"
+        />
+        <div className="flex h-full w-full flex-col transition-all">
+          <div className="h-full w-full">
+            <AceEditor
+              ref={codeRef}
+              readOnly={readonly || isBlocked}
+              value={code}
+              mode="python"
+              setOptions={{ fontFamily: "monospace" }}
+              height={height ?? "100%"}
+              highlightActiveLine={true}
+              showPrintMargin={false}
+              fontSize={14}
+              showGutter
+              enableLiveAutocompletion
+              theme={dark ? "monokai" : "github"}
+              name="CodeEditor"
+              onChange={(value) => {
+                if (!isBlocked) {
+                  setCode(value);
+                }
+              }}
+              className="h-full min-w-full rounded-lg border-[1px] border-border custom-scroll"
+            />
+          </div>
+          <div
+            className={
+              "whitespace-break-spaces transition-all delay-500" +
+              (error?.detail?.error !== undefined ? "h-2/6" : "h-0")
+            }
+          >
+            <div className="mt-5 h-full max-h-[10rem] w-full overflow-y-auto overflow-x-clip text-left custom-scroll">
+              <h1
+                data-testid="title_error_code_modal"
+                className="text-lg text-error"
+              >
+                {error?.detail?.error}
+              </h1>
+              <div className="ml-2 mt-2 w-full text-sm text-destructive word-break-break-word">
+                <span className="w-full word-break-break-word">
+                  {error?.detail?.traceback}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="flex h-fit w-full justify-end">
+            {readonly ? (
+              <Button
+                className="mt-3"
+                onClick={() => setOpen(false)}
+                type="button"
+                data-testid="codeModalOkBtn"
+              >
+                {t("modal.secretKey.doneButton")}
+              </Button>
+            ) : (
+              <Button
+                className="mt-3"
+                onClick={processCode}
+                type="submit"
+                id="checkAndSaveBtn"
+                disabled={isBlocked}
+                data-testid="checkAndSaveBtn"
+              >
+                {t("modal.prompt.checkAndSave")}
+              </Button>
+            )}
+          </div>
+        </div>
+        <ConfirmationModal
+          onClose={() => {
+            setOpenConfirmation(false);
+          }}
+          onEscapeKeyDown={(e) => {
+            e.stopPropagation();
+            setOpenConfirmation(false);
+          }}
+          size="x-small"
+          icon="AlertTriangle"
+          confirmationText={t("modal.prompt.checkAndSave")}
+          cancelText={t("modal.discardChanges")}
+          open={openConfirmation}
+          onCancel={() => setOpen(false)}
+          onConfirm={() => {
+            processCode();
+            setOpenConfirmation(false);
+          }}
+          title={t("modal.caution")}
+        >
+          <ConfirmationModal.Content>
+            <p>{t("modal.exitWithoutSaving")}</p>
+          </ConfirmationModal.Content>
+        </ConfirmationModal>
+      </BaseModal.Content>
+    </BaseModal>
+  );
+}

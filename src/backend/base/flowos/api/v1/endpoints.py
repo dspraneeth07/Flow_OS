@@ -1,0 +1,1527 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import time
+from collections.abc import AsyncGenerator
+from http import HTTPStatus
+from typing import TYPE_CHECKING, Annotated
+from uuid import UUID, uuid4
+
+import orjson
+import sqlalchemy as sa
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request, UploadFile, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import StreamingResponse
+from flowos_core.custom.custom_component.component import Component
+from flowos_core.custom.utils import (
+    add_code_field_to_build_config,
+    build_custom_component_template,
+    get_instance_name,
+    update_component_build_config,
+)
+from flowos_core.graph.graph.base import Graph
+from flowos_core.graph.schema import RunOutputs
+from flowos_core.interface.components import component_cache
+from flowos_core.log.logger import logger
+from flowos_core.schema.schema import InputValueRequest
+from flowos_core.services.settings.service import SettingsService
+from flowos_core.utils.flow_validation import (
+    CustomComponentValidationError,
+    code_hash_matches_any_template,
+    get_component_hash_lookups_for_validation,
+    get_trusted_code_for_validation,
+)
+from sqlmodel import select
+
+from flowos.api.utils import CurrentActiveUser, DbSession, extract_global_variables_from_headers, parse_value
+from flowos.api.v1.files import get_flow
+from flowos.api.v1.global_variable_defaults import apply_global_variable_defaults
+from flowos.api.v1.schemas import (
+    ConfigResponse,
+    CustomComponentRequest,
+    CustomComponentResponse,
+    PublicConfigResponse,
+    RunResponse,
+    SimplifiedAPIRequest,
+    TaskStatusResponse,
+    UpdateCustomComponentRequest,
+    UploadFileResponse,
+)
+from flowos.events.event_manager import create_stream_tokens_event_manager
+from flowos.exceptions.api import APIException, InvalidChatInputError
+from flowos.exceptions.serialization import SerializationError
+from flowos.helpers.flow import get_flow_by_id_or_endpoint_name
+from flowos.interface.initialize.loading import update_params_with_load_from_db_fields
+from flowos.processing.process import process_tweaks, run_graph_internal
+from flowos.schema.graph import Tweaks
+from flowos.services.auth.utils import (
+    api_key_security,
+    get_current_active_user,
+    get_current_user_for_sse,
+    get_optional_user,
+)
+from flowos.services.authorization import FlowAction, ensure_flow_permission
+from flowos.services.cache.utils import save_uploaded_file
+from flowos.services.database.models.flow.model import Flow, FlowRead
+from flowos.services.database.models.flow.utils import get_all_webhook_components_in_flow
+from flowos.services.database.models.jobs.model import JobType
+from flowos.services.database.models.user.model import User, UserRead
+from flowos.services.deps import (
+    get_auth_service,
+    get_job_service,
+    get_memory_base_service,
+    get_session_service,
+    get_settings_service,
+    get_task_service,
+    get_telemetry_service,
+)
+from flowos.services.event_manager import create_webhook_event_manager, webhook_event_manager
+from flowos.services.telemetry.schema import RunPayload
+from flowos.utils.compression import compress_response
+from flowos.utils.version import get_version_info
+
+
+def _requires_component_hash_lookups(settings: object, user: CurrentActiveUser) -> bool:
+    requires_admin_only_hashes = (
+        getattr(settings, "custom_component_admin_only", False) is True and not user.is_superuser
+    )
+    return requires_admin_only_hashes or not settings.allow_custom_components
+
+
+if TYPE_CHECKING:
+    from flowos.events.event_manager import EventManager
+
+router = APIRouter(tags=["Base"])
+
+# SSE Constants
+SSE_HEARTBEAT_TIMEOUT_SECONDS = 30.0
+
+
+_SIMPLIFIED_API_FORM_FIELDS = (
+    "input_value",
+    "input_type",
+    "output_type",
+    "output_component",
+    "session_id",
+    "user_id",
+)
+
+
+async def _parse_multipart_form_data(http_request: Request) -> SimplifiedAPIRequest:
+    """Parse SimplifiedAPIRequest fields from a multipart/form-data request.
+
+    Reads the form via ``http_request.form()`` so uploaded file streams are not
+    consumed by an upstream JSON parse attempt. Only string-valued fields that
+    map to ``SimplifiedAPIRequest`` are extracted; any ``UploadFile`` entries
+    (e.g. inline file uploads) are intentionally ignored here and remain
+    available to downstream handlers.
+    """
+    form = await http_request.form()
+    data: dict = {}
+
+    for field in _SIMPLIFIED_API_FORM_FIELDS:
+        value = form.get(field)
+        if isinstance(value, str):
+            data[field] = value
+
+    raw_tweaks = form.get("tweaks")
+    if isinstance(raw_tweaks, (str, bytes)) and raw_tweaks:
+        try:
+            data["tweaks"] = orjson.loads(raw_tweaks)
+        except orjson.JSONDecodeError as exc:
+            logger.warning(f"Failed to parse 'tweaks' form field as JSON: {exc}")
+
+    return SimplifiedAPIRequest(**data)
+
+
+async def parse_input_request_from_body(http_request: Request) -> SimplifiedAPIRequest:
+    """Parse SimplifiedAPIRequest from HTTP request body.
+
+    This function handles the case where FastAPI can't automatically parse the request body
+    due to the presence of a Request parameter in the endpoint signature.
+
+    Supports both ``application/json`` and ``multipart/form-data`` bodies. For
+    multipart requests, form fields matching ``SimplifiedAPIRequest`` (including
+    ``session_id``) are extracted via ``request.form()`` rather than being lost
+    to a failing JSON parse.
+
+    Args:
+        http_request: The FastAPI Request object
+
+    Returns:
+        SimplifiedAPIRequest: Parsed request or default instance if parsing fails
+    """
+    content_type = (http_request.headers.get("content-type") or "").lower()
+
+    try:
+        if content_type.startswith("multipart/form-data"):
+            return await _parse_multipart_form_data(http_request)
+
+        body = await http_request.body()
+        if body:
+            body_data = orjson.loads(body)
+            return SimplifiedAPIRequest(**body_data)
+        return SimplifiedAPIRequest()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"Failed to parse request body: {exc}")
+        return SimplifiedAPIRequest()
+
+
+@router.get("/all", dependencies=[Depends(get_current_active_user)])
+async def get_all(request: Request):
+    """Retrieve all component types with compression for better performance.
+
+    Returns a compressed response containing all available component types,
+    with display_names translated to the locale indicated by Accept-Language.
+    """
+    from flowos.interface.components import get_and_cache_all_types_dict
+    from flowos.utils.i18n import build_component_display_names, translate_component_dict
+
+    try:
+        all_types_en = await get_and_cache_all_types_dict(settings_service=get_settings_service())
+
+        locale = getattr(request.state, "locale", "en")
+        all_types = translate_component_dict(all_types_en, locale) if locale != "en" else all_types_en
+
+        component_display_names = build_component_display_names(all_types_en)
+        return compress_response({**all_types, "component_display_names": component_display_names})
+
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+def validate_input_and_tweaks(input_request: SimplifiedAPIRequest) -> None:
+    # If the input_value is not None and the input_type is "chat"
+    # then we need to check the tweaks if the ChatInput component is present
+    # and if its input_value is not None
+    # if so, we raise an error
+    if not input_request.tweaks:
+        return
+
+    for key, value in input_request.tweaks.items():
+        if not isinstance(value, dict):
+            continue
+
+        input_value = value.get("input_value")
+        if input_value is None:
+            continue
+
+        request_has_input = input_request.input_value is not None
+
+        if any(chat_key in key for chat_key in ("ChatInput", "Chat Input")):
+            if request_has_input and input_request.input_type == "chat":
+                msg = "If you pass an input_value to the chat input, you cannot pass a tweak with the same name."
+                raise InvalidChatInputError(msg)
+
+        elif (
+            any(text_key in key for text_key in ("TextInput", "Text Input"))
+            and request_has_input
+            and input_request.input_type == "text"
+        ):
+            msg = "If you pass an input_value to the text input, you cannot pass a tweak with the same name."
+            raise InvalidChatInputError(msg)
+
+
+async def simple_run_flow(
+    flow: Flow,
+    input_request: SimplifiedAPIRequest,
+    *,
+    stream: bool = False,
+    api_key_user: User | None = None,
+    event_manager: EventManager | None = None,
+    context: dict | None = None,
+    run_id: str | None = None,
+):
+    validate_input_and_tweaks(input_request)
+    try:
+        task_result: list[RunOutputs] = []
+        user_id = api_key_user.id if api_key_user else None
+        flow_id_str = str(flow.id)
+        if flow.data is None:
+            msg = f"Flow {flow_id_str} has no data"
+            raise ValueError(msg)
+        graph_data = flow.data.copy()
+        graph_data = process_tweaks(graph_data, input_request.tweaks or {}, stream=stream)
+        # Mirror the Playground's one-time fix in-memory: bind empty fields whose
+        # display_name matches a user global variable's default_fields. Without
+        # this, API-only workflows never trigger the frontend hook that persists
+        # load_from_db=true, so variables with "Apply to Fields" silently fail.
+        # See: https://github.com/flowos-ai/flowos/issues/11781
+        if user_id is not None:
+            graph_data = await apply_global_variable_defaults(graph_data, user_id)
+        graph = Graph.from_payload(
+            graph_data, flow_id=flow_id_str, user_id=str(user_id), flow_name=flow.name, context=context
+        )
+        # Forward the caller-supplied identifier to tracing providers without
+        # affecting authn/authz. The API-key owner remains the effective user
+        # for permissions, global variables, and job ownership.
+        if input_request.user_id:
+            graph.tracing_user_id = input_request.user_id
+        run_id_uuid = uuid4() if run_id is None else UUID(run_id)
+        run_id = str(run_id_uuid)
+        graph.set_run_id(run_id)
+        inputs = None
+        if input_request.input_value is not None:
+            inputs = [
+                InputValueRequest(
+                    components=[],
+                    input_value=input_request.input_value,
+                    type=input_request.input_type,
+                )
+            ]
+        if input_request.output_component:
+            outputs = [input_request.output_component]
+        else:
+            outputs = [
+                vertex.id
+                for vertex in graph.vertices
+                if input_request.output_type == "debug"
+                or (
+                    vertex.is_output
+                    and (input_request.output_type == "any" or input_request.output_type in vertex.id.lower())  # type: ignore[operator]
+                )
+            ]
+
+        # Create a WORKFLOW job record so memory-base on_flow_output can track this run.
+        if user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required to run flows.",
+            )
+
+        try:
+            _job_svc = get_job_service()
+            await _job_svc.create_job(
+                job_id=run_id_uuid,
+                flow_id=flow.id,
+                user_id=user_id,
+                job_type=JobType.WORKFLOW,
+            )
+            task_result, session_id = await _job_svc.execute_with_status(
+                run_id_uuid,
+                run_graph_internal,
+                graph=graph,
+                flow_id=flow_id_str,
+                session_id=input_request.session_id,
+                inputs=inputs,
+                outputs=outputs,
+                stream=stream,
+                event_manager=event_manager,
+            )
+        except Exception as exc:
+            await logger.aerror(
+                "Workflow job execution failed for flow %s: %s",
+                flow.id,
+                str(exc),
+                exc_info=True,
+            )
+            raise APIException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                exception=exc,
+                flow=flow,
+            ) from exc
+
+        # Fire memory-base auto-capture hook — non-blocking background effect.
+        try:
+            _run_id_uuid = UUID(graph.run_id) if graph.run_id else None  # type-cast only
+            await get_task_service().fire_and_forget_task(
+                get_memory_base_service().on_flow_output,
+                flow_id=flow.id,
+                session_id=session_id,
+                job_id=_run_id_uuid,
+            )
+        except (RuntimeError, ValueError, OSError):
+            await logger.awarning("Memory base hook scheduling failed for flow %s", flow.id, exc_info=True)
+
+        return RunResponse(outputs=task_result, session_id=session_id)
+
+    except sa.exc.StatementError as exc:
+        raise ValueError(str(exc)) from exc
+
+
+def _get_vertex_ids_from_flow(flow: Flow) -> list[str]:
+    """Extract vertex IDs from flow data."""
+    if not flow.data or not flow.data.get("nodes"):
+        return []
+    return [node.get("id") for node in flow.data.get("nodes", []) if node.get("id")]
+
+
+async def simple_run_flow_task(
+    flow: Flow,
+    input_request: SimplifiedAPIRequest,
+    *,
+    stream: bool = False,
+    api_key_user: User | None = None,
+    event_manager: EventManager | None = None,
+    telemetry_service=None,
+    start_time: float | None = None,
+    run_id: str | None = None,
+    emit_events: bool = False,
+    flow_id: str | None = None,
+):
+    """Run a flow task as a BackgroundTask, therefore it should not throw exceptions.
+
+    Args:
+        flow: The flow to execute
+        input_request: The simplified API request
+        stream: Whether to stream results
+        api_key_user: The user executing the flow
+        event_manager: Event manager for streaming
+        telemetry_service: Service for logging telemetry
+        start_time: Start time for duration calculation
+        run_id: Unique ID for this run
+        emit_events: Whether to emit events to webhook_event_manager (for UI feedback)
+        flow_id: Flow ID for event emission (required if emit_events=True)
+    """
+    should_emit = emit_events and flow_id
+
+    # Create an EventManager that forwards events to webhook SSE if we should emit
+    webhook_em = None
+    if should_emit and event_manager is None and flow_id is not None:
+        webhook_em = create_webhook_event_manager(flow_id, run_id)
+
+    # Use provided event_manager or the webhook one
+    effective_event_manager = event_manager or webhook_em
+
+    try:
+        if should_emit and flow_id is not None:
+            vertex_ids = _get_vertex_ids_from_flow(flow)
+            await webhook_event_manager.emit(
+                flow_id,
+                "vertices_sorted",
+                {"ids": vertex_ids, "to_run": vertex_ids, "run_id": run_id},
+            )
+
+        result = await simple_run_flow(
+            flow=flow,
+            input_request=input_request,
+            stream=stream,
+            api_key_user=api_key_user,
+            event_manager=effective_event_manager,
+            run_id=run_id,
+        )
+
+        if should_emit and flow_id is not None:
+            await webhook_event_manager.emit(flow_id, "end", {"run_id": run_id, "success": True})
+
+        if telemetry_service and start_time is not None:
+            await telemetry_service.log_package_run(
+                RunPayload(
+                    run_is_webhook=True,
+                    run_seconds=int(time.perf_counter() - start_time),
+                    run_success=True,
+                    run_error_message="",
+                    run_id=run_id,
+                )
+            )
+        return result  # noqa: TRY300
+
+    except Exception as exc:  # noqa: BLE001
+        await logger.aexception(f"Error running flow {flow.id} task")
+
+        if should_emit and flow_id is not None:
+            await webhook_event_manager.emit(flow_id, "end", {"run_id": run_id, "success": False, "error": str(exc)})
+
+        if telemetry_service and start_time is not None:
+            await telemetry_service.log_package_run(
+                RunPayload(
+                    run_is_webhook=True,
+                    run_seconds=int(time.perf_counter() - start_time),
+                    run_success=False,
+                    run_error_message=str(exc),
+                    run_id=run_id,
+                )
+            )
+        return None
+
+
+async def consume_and_yield(queue: asyncio.Queue, client_consumed_queue: asyncio.Queue) -> AsyncGenerator:
+    """Consumes events from a queue and yields them to the client while tracking timing metrics.
+
+    This coroutine continuously pulls events from the input queue and yields them to the client.
+    It tracks timing metrics for how long events spend in the queue and how long the client takes
+    to process them.
+
+    Args:
+        queue (asyncio.Queue): The queue containing events to be consumed and yielded
+        client_consumed_queue (asyncio.Queue): A queue for tracking when the client has consumed events
+
+    Yields:
+        The value from each event in the queue
+
+    Notes:
+        - Events are tuples of (event_id, value, put_time)
+        - Breaks the loop when receiving a None value, signaling completion
+        - Tracks and logs timing metrics for queue time and client processing time
+        - Notifies client consumption via client_consumed_queue
+    """
+    while True:
+        event_id, value, put_time = await queue.get()
+        if value is None:
+            break
+        get_time = time.time()
+        yield value
+        get_time_yield = time.time()
+        client_consumed_queue.put_nowait(event_id)
+        await logger.adebug(
+            f"consumed event {event_id} "
+            f"(time in queue, {get_time - put_time:.4f}, "
+            f"client {get_time_yield - get_time:.4f})"
+        )
+
+
+async def run_flow_generator(
+    flow: Flow,
+    input_request: SimplifiedAPIRequest,
+    api_key_user: User | None,
+    event_manager: EventManager,
+    client_consumed_queue: asyncio.Queue,
+    context: dict | None = None,
+) -> None:
+    """Executes a flow asynchronously and manages event streaming to the client.
+
+    This coroutine runs a flow with streaming enabled and handles the event lifecycle,
+    including success completion and error scenarios.
+
+    Args:
+        flow (Flow): The flow to execute
+        input_request (SimplifiedAPIRequest): The input parameters for the flow
+        api_key_user (User | None): Optional authenticated user running the flow
+        event_manager (EventManager): Manages the streaming of events to the client
+        client_consumed_queue (asyncio.Queue): Tracks client consumption of events
+        context (dict | None): Optional context to pass to the flow
+
+    Events Generated:
+        - "add_message": Sent when new messages are added during flow execution
+        - "token": Sent for each token generated during streaming
+        - "end": Sent when flow execution completes, includes final result
+        - "error": Sent if an error occurs during execution
+
+    Notes:
+        - Runs the flow with streaming enabled via simple_run_flow()
+        - On success, sends the final result via event_manager.on_end()
+        - On error, logs the error and sends it via event_manager.on_error()
+        - Always sends a final None event to signal completion
+    """
+    try:
+        result = await simple_run_flow(
+            flow=flow,
+            input_request=input_request,
+            stream=True,
+            api_key_user=api_key_user,
+            event_manager=event_manager,
+            context=context,
+        )
+        event_manager.on_end(data={"result": result.model_dump()})
+        await client_consumed_queue.get()
+    except Exception as e:  # noqa: BLE001 - Catch ALL exceptions to ensure errors are propagated in streaming
+        await logger.aerror(f"Error running flow: {e}")
+        event_manager.on_error(data={"error": str(e)})
+    finally:
+        await event_manager.queue.put((None, None, time.time))
+
+
+async def get_flow_for_api_key_user(
+    flow_id_or_name: str,
+    api_key_user: Annotated[UserRead, Depends(api_key_security)],
+) -> FlowRead:
+    """Auth-aware wrapper around ``get_flow_by_id_or_endpoint_name`` for API-key routes.
+
+    Using the raw helper as a FastAPI ``Depends`` exposed ``user_id`` as a
+    plain query parameter that no real caller sets, so flow lookups on the
+    ``/run*`` routes bypassed user scoping entirely. This wrapper pulls the
+    authenticated user from ``api_key_security`` and passes it to the helper,
+    so cross-user access fails closed with 404 at the helper layer.
+
+    When an authorization plugin is registered, the lookup is
+    share-aware (load by id, route guard decides access). The OSS pass-through
+    default keeps the owner-scoped lookup.
+    """
+    # These wrappers always pair with ``ensure_flow_permission`` in the route
+    # handler, so opting in to share-aware widening is safe.
+    return await get_flow_by_id_or_endpoint_name(flow_id_or_name, api_key_user.id, widen_for_shares=True)
+
+
+async def get_flow_for_current_user(
+    flow_id_or_name: str,
+    current_user: CurrentActiveUser,
+) -> FlowRead:
+    """Session-auth variant of :func:`get_flow_for_api_key_user`."""
+    return await get_flow_by_id_or_endpoint_name(flow_id_or_name, current_user.id, widen_for_shares=True)
+
+
+class SseAuth:
+    """Helper to carry both authenticated user and flow for SSE subscription."""
+
+    def __init__(self, user: User | UserRead, flow: FlowRead):
+        self.user = user
+        self.flow = flow
+
+
+async def get_flow_for_sse_user(
+    flow_id_or_name: str,
+    user: Annotated[User | UserRead, Depends(get_current_user_for_sse)],
+) -> SseAuth:
+    """Auth-aware dependency for SSE routes.
+
+    Returns both the SSE user and the flow so the route can call
+    ``ensure_flow_permission`` *before* subscribing to the event stream.
+    Widening to share-aware lookup is safe here only because the route
+    immediately enforces ``flow:read``; without that enforcement, a non-owner
+    with cross-user fetch enabled could subscribe to another user's webhook
+    event stream and exfiltrate flow id/name plus event payloads.
+    """
+    flow = await get_flow_by_id_or_endpoint_name(flow_id_or_name, user_id=user.id, widen_for_shares=True)
+    return SseAuth(user=user, flow=flow)
+
+
+class WebhookAuth:
+    """Helper to carry both authenticated user and flow for webhook execution."""
+
+    def __init__(self, user: UserRead, flow: FlowRead):
+        self.user = user
+        self.flow = flow
+
+
+async def get_webhook_auth(
+    flow_id_or_name: str,
+    request: Request,
+) -> WebhookAuth:
+    """Auth-aware dependency that resolves both the webhook user and the flow.
+
+    Centralizes the security logic for webhook run endpoints.
+    """
+    webhook_user = await get_auth_service().get_webhook_user(flow_id_or_name, request)
+    # Webhook route also calls ``ensure_flow_permission`` after, so widening
+    # for shared resources is acceptable here.
+    flow = await get_flow_by_id_or_endpoint_name(flow_id_or_name, user_id=webhook_user.id, widen_for_shares=True)
+    return WebhookAuth(user=webhook_user, flow=flow)
+
+
+async def _run_flow_internal(
+    *,
+    background_tasks: BackgroundTasks,
+    flow: FlowRead | None,
+    input_request: SimplifiedAPIRequest | None,
+    stream: bool,
+    api_key_user: User | UserRead,
+    context: dict | None,
+    http_request: Request,
+) -> StreamingResponse | RunResponse:
+    """Internal function containing the core business logic for running a flow.
+
+    This function is shared between session-based and API key-based authentication endpoints.
+
+    Args:
+        background_tasks (BackgroundTasks): FastAPI background task manager
+        flow (FlowRead | None): The flow to execute, loaded via dependency
+        input_request (SimplifiedAPIRequest | None): Input parameters for the flow
+        stream (bool): Whether to stream the response
+        api_key_user (User | UserRead): Authenticated user (either from session or API key)
+        context (dict | None): Optional context to pass to the flow
+        http_request (Request): The incoming HTTP request for extracting global variables
+
+    Returns:
+        Union[StreamingResponse, RunResponse]: Either a streaming response for real-time results
+        or a RunResponse with the complete execution results
+
+    Raises:
+        HTTPException: For flow not found (404) or invalid input (400)
+        APIException: For internal execution errors (500)
+    """
+    # Authorization happens upstream: every caller of _run_flow_internal must
+    # have called ensure_flow_permission(FlowAction.EXECUTE, ...) before
+    # invoking us. The owner-only check that used to live here would reject any
+    # plugin execute-grant on a shared flow, defeating the plugin's
+    # purpose. Adding a defense-in-depth check here would re-introduce the
+    # same regression.
+    telemetry_service = get_telemetry_service()
+
+    # If input_request is None, manually parse the request body
+    # This happens when FastAPI can't automatically parse it due to the Request parameter
+    if input_request is None:
+        input_request = await parse_input_request_from_body(http_request)
+
+    if flow is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Flow not found")
+
+    # Extract request-level variables from headers with prefix X-FLOWOS-GLOBAL-VAR-*
+    request_variables = extract_global_variables_from_headers(http_request.headers)
+
+    # Merge request variables with existing context
+    if request_variables:
+        if context is None:
+            context = {"request_variables": request_variables}
+        else:
+            context = context.copy()  # Don't modify the original context
+            context["request_variables"] = request_variables
+
+    start_time = time.perf_counter()
+
+    if stream:
+        asyncio_queue: asyncio.Queue = asyncio.Queue()
+        asyncio_queue_client_consumed: asyncio.Queue = asyncio.Queue()
+        event_manager = create_stream_tokens_event_manager(queue=asyncio_queue)
+        main_task = asyncio.create_task(
+            run_flow_generator(
+                flow=flow,
+                input_request=input_request,
+                api_key_user=api_key_user,
+                event_manager=event_manager,
+                client_consumed_queue=asyncio_queue_client_consumed,
+                context=context,
+            )
+        )
+
+        async def on_disconnect() -> None:
+            await logger.adebug("Client disconnected, closing tasks")
+            main_task.cancel()
+
+        return StreamingResponse(
+            consume_and_yield(asyncio_queue, asyncio_queue_client_consumed),
+            background=on_disconnect,
+            media_type="text/event-stream",
+        )
+
+    run_id = str(uuid4())
+    try:
+        result = await simple_run_flow(
+            flow=flow,
+            input_request=input_request,
+            stream=stream,
+            api_key_user=api_key_user,
+            context=context,
+            run_id=run_id,
+        )
+        end_time = time.perf_counter()
+        background_tasks.add_task(
+            telemetry_service.log_package_run,
+            RunPayload(
+                run_is_webhook=False,
+                run_seconds=int(end_time - start_time),
+                run_success=True,
+                run_error_message="",
+                run_id=run_id,
+            ),
+        )
+
+    except ValueError as exc:
+        background_tasks.add_task(
+            telemetry_service.log_package_run,
+            RunPayload(
+                run_is_webhook=False,
+                run_seconds=int(time.perf_counter() - start_time),
+                run_success=False,
+                run_error_message=str(exc),
+                run_id=run_id,
+            ),
+        )
+        if "badly formed hexadecimal UUID string" in str(exc):
+            # This means the Flow ID is not a valid UUID which means it can't find the flow
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        if isinstance(exc, CustomComponentValidationError):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        if "not found" in str(exc):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise APIException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, exception=exc, flow=flow) from exc
+    except InvalidChatInputError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        background_tasks.add_task(
+            telemetry_service.log_package_run,
+            RunPayload(
+                run_is_webhook=False,
+                run_seconds=int(time.perf_counter() - start_time),
+                run_success=False,
+                run_error_message=str(exc),
+                run_id=run_id,
+            ),
+        )
+        raise APIException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, exception=exc, flow=flow) from exc
+
+    return result
+
+
+@router.post("/run/{flow_id_or_name}", response_model=None, response_model_exclude_none=True)
+async def simplified_run_flow(
+    *,
+    background_tasks: BackgroundTasks,
+    flow: Annotated[FlowRead, Depends(get_flow_for_api_key_user)],
+    input_request: SimplifiedAPIRequest | None = None,
+    stream: bool = False,
+    api_key_user: Annotated[UserRead, Depends(api_key_security)],
+    context: dict | None = None,
+    http_request: Request,
+):
+    """Executes a specified flow by ID with support for streaming and telemetry (API key auth).
+
+    This endpoint executes a flow identified by ID or name, with options for streaming the response
+    and tracking execution metrics. It handles both streaming and non-streaming execution modes.
+    This endpoint uses API key authentication (Bearer token).
+
+    Args:
+        background_tasks (BackgroundTasks): FastAPI background task manager
+        flow (FlowRead | None): The flow to execute, loaded via dependency
+        input_request (SimplifiedAPIRequest | None): Input parameters for the flow
+        stream (bool): Whether to stream the response
+        api_key_user (UserRead): Authenticated user from API key
+        context (dict | None): Optional context to pass to the flow
+        http_request (Request): The incoming HTTP request for extracting global variables
+
+    Returns:
+        Union[StreamingResponse, RunResponse]: Either a streaming response for real-time results
+        or a RunResponse with the complete execution results
+
+    Raises:
+        HTTPException: For flow not found (404) or invalid input (400)
+        APIException: For internal execution errors (500)
+
+    Notes:
+        - Supports both streaming and non-streaming execution modes
+        - Tracks execution time and success/failure via telemetry
+        - Handles graceful client disconnection in streaming mode
+        - Provides detailed error handling with appropriate HTTP status codes
+        - Extracts global variables from HTTP headers with prefix X-FLOWOS-GLOBAL-VAR-*
+        - Merges extracted variables with the context parameter as "request_variables"
+        - In streaming mode, uses EventManager to handle events:
+            - "add_message": New messages during execution
+            - "token": Individual tokens during streaming
+            - "end": Final execution result
+        - Authentication: Requires API key (Bearer token)
+    """
+    await ensure_flow_permission(
+        api_key_user,
+        FlowAction.EXECUTE,
+        flow_id=flow.id,
+        flow_user_id=flow.user_id,
+        workspace_id=flow.workspace_id,
+        folder_id=flow.folder_id,
+    )
+    return await _run_flow_internal(
+        background_tasks=background_tasks,
+        flow=flow,
+        input_request=input_request,
+        stream=stream,
+        api_key_user=api_key_user,
+        context=context,
+        http_request=http_request,
+    )
+
+
+@router.post(
+    "/run/session/{flow_id_or_name}", response_model=None, response_model_exclude_none=True, include_in_schema=False
+)
+async def simplified_run_flow_session(
+    *,
+    background_tasks: BackgroundTasks,
+    flow: Annotated[FlowRead, Depends(get_flow_for_current_user)],
+    input_request: SimplifiedAPIRequest | None = None,
+    stream: bool = False,
+    api_key_user: CurrentActiveUser,
+    context: dict | None = None,
+    http_request: Request,
+):
+    """Executes a specified flow by ID with support for streaming and telemetry (session auth).
+
+    This endpoint executes a flow identified by ID or name, with options for streaming the response
+    and tracking execution metrics. It handles both streaming and non-streaming execution modes.
+    This endpoint uses session-based authentication (cookies).
+
+    Args:
+        background_tasks (BackgroundTasks): FastAPI background task manager
+        flow (FlowRead | None): The flow to execute, loaded via dependency
+        input_request (SimplifiedAPIRequest | None): Input parameters for the flow
+        stream (bool): Whether to stream the response
+        api_key_user (User): Authenticated user from session
+        context (dict | None): Optional context to pass to the flow
+        http_request (Request): The incoming HTTP request for extracting global variables
+
+    Returns:
+        Union[StreamingResponse, RunResponse]: Either a streaming response for real-time results
+        or a RunResponse with the complete execution results
+
+    Raises:
+        HTTPException: For flow not found (404) or invalid input (400)
+        APIException: For internal execution errors (500)
+
+    Notes:
+        - Supports both streaming and non-streaming execution modes
+        - Tracks execution time and success/failure via telemetry
+        - Handles graceful client disconnection in streaming mode
+        - Provides detailed error handling with appropriate HTTP status codes
+        - Extracts global variables from HTTP headers with prefix X-FLOWOS-GLOBAL-VAR-*
+        - Merges extracted variables with the context parameter as "request_variables"
+        - In streaming mode, uses EventManager to handle events:
+            - "add_message": New messages during execution
+            - "token": Individual tokens during streaming
+            - "end": Final execution result
+        - Authentication: Requires active session (cookies)
+        - Feature Flag: Only available when agentic_experience is enabled
+    """
+    # Feature flag: Only allow access if agentic_experience is enabled
+    if not get_settings_service().settings.agentic_experience:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="This endpoint is not available",
+        )
+
+    await ensure_flow_permission(
+        api_key_user,
+        FlowAction.EXECUTE,
+        flow_id=flow.id,
+        flow_user_id=flow.user_id,
+        workspace_id=flow.workspace_id,
+        folder_id=flow.folder_id,
+    )
+    return await _run_flow_internal(
+        background_tasks=background_tasks,
+        flow=flow,
+        input_request=input_request,
+        stream=stream,
+        api_key_user=api_key_user,
+        context=context,
+        http_request=http_request,
+    )
+
+
+@router.get("/webhook-events/{flow_id_or_name}", include_in_schema=False)
+async def webhook_events_stream(
+    auth: Annotated[SseAuth, Depends(get_flow_for_sse_user)],
+    request: Request,
+):
+    """Server-Sent Events (SSE) endpoint for real-time webhook build updates.
+
+    When a flow is open in the UI, this endpoint provides live feedback
+    of webhook execution progress, similar to clicking "Play" in the UI.
+
+    Authentication: Requires user to be logged in (via cookie) or provide API key.
+    The user must own the flow OR have an authorization-plugin-granted
+    ``flow:read`` permission to subscribe to its events.
+    """
+    flow = auth.flow
+    # Enforce flow:read before subscribing — the SSE fetcher uses share-aware
+    # lookup, so without this check a non-owner with cross-user fetch enabled
+    # would receive another user's webhook event payloads.
+    await ensure_flow_permission(
+        auth.user,
+        FlowAction.READ,
+        flow_id=flow.id,
+        flow_user_id=flow.user_id,
+        workspace_id=getattr(flow, "workspace_id", None),
+        folder_id=getattr(flow, "folder_id", None),
+    )
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        """Generate SSE events from the webhook event manager."""
+        flow_id_str = str(flow.id)
+        queue = await webhook_event_manager.subscribe(flow_id_str)
+
+        try:
+            # Send initial connection event
+            yield f"event: connected\ndata: {json.dumps({'flow_id': flow_id_str, 'flow_name': flow.name})}\n\n"
+
+            while True:
+                if await request.is_disconnected():
+                    break
+
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=SSE_HEARTBEAT_TIMEOUT_SECONDS)
+                    event_type = event["event"]
+                    event_data = json.dumps(event["data"])
+                    yield f"event: {event_type}\ndata: {event_data}\n\n"
+                except asyncio.TimeoutError:
+                    yield f"event: heartbeat\ndata: {json.dumps({'timestamp': time.time()})}\n\n"
+
+        except asyncio.CancelledError:
+            pass
+        finally:
+            await webhook_event_manager.unsubscribe(flow_id_str, queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("/webhook/{flow_id_or_name}", response_model=dict, status_code=HTTPStatus.ACCEPTED)  # noqa: RUF100, FAST003
+async def webhook_run_flow(
+    auth: Annotated[WebhookAuth, Depends(get_webhook_auth)],
+    request: Request,
+):
+    """Run a flow using a webhook request.
+
+    Args:
+        auth: Resolved webhook user and flow, scoped to the authenticated caller.
+        request: The incoming HTTP request.
+
+    Returns:
+        A dictionary containing the status of the task.
+
+    Raises:
+        HTTPException: If the flow is not found or if there is an error processing the request.
+    """
+    telemetry_service = get_telemetry_service()
+    start_time = time.perf_counter()
+    await logger.adebug("Received webhook request")
+    error_msg = ""
+
+    # Webhook user and flow are resolved by the dependency
+    webhook_user = auth.user
+    flow = auth.flow
+
+    await ensure_flow_permission(
+        webhook_user,
+        FlowAction.EXECUTE,
+        flow_id=flow.id,
+        flow_user_id=flow.user_id,
+        workspace_id=flow.workspace_id,
+        folder_id=flow.folder_id,
+    )
+
+    try:
+        data = await request.body()
+    except Exception as exc:
+        error_msg = str(exc)
+        raise HTTPException(status_code=500, detail=error_msg) from exc
+
+    if not data:
+        error_msg = "Request body is empty. You should provide a JSON payload containing the flow ID."
+        raise HTTPException(status_code=400, detail=error_msg)
+
+    try:
+        # get all webhook components in the flow
+        webhook_components = get_all_webhook_components_in_flow(flow.data)
+        tweaks = {}
+
+        for component in webhook_components:
+            tweaks[component["id"]] = {"data": data.decode() if isinstance(data, bytes) else data}
+        input_request = SimplifiedAPIRequest(
+            input_value="",
+            input_type="chat",
+            output_type="chat",
+            tweaks=tweaks,
+            session_id=None,
+        )
+
+        # Check if there are UI listeners connected via SSE
+        flow_id_str = str(flow.id)
+        has_ui_listeners = webhook_event_manager.has_listeners(flow_id_str)
+
+        await logger.adebug("Starting background task")
+        run_id = str(uuid4())
+
+        # Use asyncio.create_task to run in same event loop (needed for SSE)
+        background_task = asyncio.create_task(
+            simple_run_flow_task(
+                flow=flow,
+                input_request=input_request,
+                api_key_user=webhook_user,
+                telemetry_service=telemetry_service,
+                start_time=start_time,
+                run_id=run_id,
+                emit_events=has_ui_listeners,
+                flow_id=flow_id_str,
+            )
+        )
+        # Fire-and-forget: log exceptions but don't block
+        background_task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+    except Exception as exc:
+        error_msg = str(exc)
+        raise HTTPException(status_code=500, detail=error_msg) from exc
+
+    return {"message": "Task started in the background", "status": "in progress"}
+
+
+@router.post(
+    "/run/advanced/{flow_id_or_name}",
+    response_model=RunResponse,
+    response_model_exclude_none=True,
+)
+async def experimental_run_flow(
+    *,
+    session: DbSession,
+    flow: Annotated[Flow, Depends(get_flow_for_api_key_user)],
+    inputs: list[InputValueRequest] | None = None,
+    outputs: list[str] | None = None,
+    tweaks: Annotated[Tweaks | None, Body(embed=True)] = None,
+    stream: Annotated[bool, Body(embed=True)] = False,
+    session_id: Annotated[None | str, Body(embed=True)] = None,
+    api_key_user: Annotated[UserRead, Depends(api_key_security)],
+) -> RunResponse:
+    """Executes a specified flow by ID with optional input values, output selection, tweaks, and streaming capability.
+
+    This endpoint supports running flows with caching to enhance performance and efficiency.
+
+    ### Parameters:
+    - `flow` (Flow): The flow object to be executed, resolved via dependency injection.
+    - `inputs` (List[InputValueRequest], optional): A list of inputs specifying the input values and components
+      for the flow. Each input can target specific components and provide custom values.
+    - `outputs` (List[str], optional): A list of output names to retrieve from the executed flow.
+      If not provided, all outputs are returned.
+    - `tweaks` (Optional[Tweaks], optional): A dictionary of tweaks to customize the flow execution.
+      The tweaks can be used to modify the flow's parameters and components.
+      Tweaks can be overridden by the input values.
+    - `stream` (bool, optional): Specifies whether the results should be streamed. Defaults to False.
+    - `session_id` (Union[None, str], optional): An optional session ID to utilize existing session data for the flow
+      execution.
+    - `api_key_user` (User): The user associated with the current API key. Automatically resolved from the API key.
+
+    ### Returns:
+    A `RunResponse` object containing the selected outputs (or all if not specified) of the executed flow
+    and the session ID.
+    The structure of the response accommodates multiple inputs, providing a nested list of outputs for each input.
+
+    ### Raises:
+    HTTPException: Indicates issues with finding the specified flow, invalid input formats, or internal errors during
+    flow execution.
+
+    ### Example usage:
+    ```json
+    POST /run/flow_id
+    x-api-key: YOUR_API_KEY
+    Payload:
+    {
+        "inputs": [
+            {"components": ["component1"], "input_value": "value1"},
+            {"components": ["component3"], "input_value": "value2"}
+        ],
+        "outputs": ["Component Name", "component_id"],
+        "tweaks": {"parameter_name": "value", "Component Name": {"parameter_name": "value"}, "component_id": {"parameter_name": "value"}}
+        "stream": false
+    }
+    ```
+
+    This endpoint facilitates complex flow executions with customized inputs, outputs, and configurations,
+    catering to diverse application requirements.
+    """  # noqa: E501
+    await ensure_flow_permission(
+        api_key_user,
+        FlowAction.EXECUTE,
+        flow_id=flow.id,
+        flow_user_id=flow.user_id,
+        workspace_id=flow.workspace_id,
+        folder_id=flow.folder_id,
+    )
+
+    session_service = get_session_service()
+    flow_id_str = str(flow.id)
+    if outputs is None:
+        outputs = []
+    if inputs is None:
+        inputs = [InputValueRequest(components=[], input_value="")]
+
+    if session_id:
+        try:
+            session_data = await session_service.load_session(session_id, flow_id=flow_id_str)
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+        graph, _artifacts = session_data or (None, None)
+        if graph is None:
+            msg = f"Session {session_id} not found"
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=msg)
+    else:
+        try:
+            # Get the flow that matches the flow_id and belongs to the user
+            # flow = session.query(Flow).filter(Flow.id == flow_id).filter(Flow.user_id == api_key_user.id).first()
+            stmt = select(Flow).where(Flow.id == flow.id).where(Flow.user_id == api_key_user.id)
+            flow = (await session.exec(stmt)).first()
+        except sa.exc.StatementError as exc:
+            # StatementError('(builtins.ValueError) badly formed hexadecimal UUID string')
+            if "badly formed hexadecimal UUID string" in str(exc):
+                await logger.aerror(f"Flow ID {flow_id_str} is not a valid UUID")
+                # This means the Flow ID is not a valid UUID which means it can't find the flow
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+        if flow is None:
+            msg = f"Flow {flow_id_str} not found"
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=msg)
+
+        if flow.data is None:
+            msg = f"Flow {flow_id_str} has no data"
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=msg)
+        try:
+            graph_data = flow.data
+            graph_data = process_tweaks(graph_data, tweaks or {})
+            graph = Graph.from_payload(graph_data, flow_id=flow_id_str)
+        except CustomComponentValidationError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+    try:
+        task_result, session_id = await run_graph_internal(
+            graph=graph,
+            flow_id=flow_id_str,
+            session_id=session_id,
+            inputs=inputs,
+            outputs=outputs,
+            stream=stream,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+    # Fire memory-base auto-capture hook — non-blocking background effect.
+    try:
+        _run_id_uuid = UUID(graph.run_id) if graph.run_id else None  # type-cast only
+        await get_task_service().fire_and_forget_task(
+            get_memory_base_service().on_flow_output,
+            flow_id=flow.id,
+            session_id=session_id,
+            job_id=_run_id_uuid,
+        )
+    except (RuntimeError, ValueError, OSError):
+        await logger.awarning("Memory base hook scheduling failed for flow %s", flow.id, exc_info=True)
+
+    return RunResponse(outputs=task_result, session_id=session_id)
+
+
+@router.post(
+    "/predict/{_flow_id}",
+    dependencies=[Depends(api_key_security)],
+    include_in_schema=False,
+)
+@router.post(
+    "/process/{_flow_id}",
+    dependencies=[Depends(api_key_security)],
+    include_in_schema=False,
+)
+async def process(_flow_id) -> None:
+    """Endpoint to process an input with a given flow_id."""
+    # Raise a depreciation warning
+    await logger.awarning(
+        "The /process endpoint is deprecated and will be removed in a future version. Please use /run instead."
+    )
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="The /process endpoint is deprecated and will be removed in a future version. Please use /run instead.",
+    )
+
+
+@router.get("/task/{_task_id}", deprecated=True, include_in_schema=False)
+async def get_task_status(_task_id: str) -> TaskStatusResponse:
+    """Get the status of a task by ID (Deprecated).
+
+    This endpoint is deprecated and will be removed in a future version.
+    """
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="The /task endpoint is deprecated and will be removed in a future version. Please use /run instead.",
+    )
+
+
+@router.post(
+    "/upload/{flow_id}",
+    status_code=HTTPStatus.CREATED,
+    deprecated=True,
+    include_in_schema=False,
+)
+async def create_upload_file(
+    file: UploadFile,
+    flow: Annotated[Flow, Depends(get_flow)],
+    settings_service: Annotated[SettingsService, Depends(get_settings_service)],
+) -> UploadFileResponse:
+    """Upload a file for a specific flow (Deprecated).
+
+    This endpoint is deprecated and will be removed in a future version.
+    Authorization is handled by the ``get_flow`` dependency, which requires an
+    authenticated user and verifies flow ownership.  Mirrors the
+    ``max_file_size_upload`` guard on the non-deprecated twin at
+    ``/api/v1/files/upload/{flow_id}`` so authenticated callers can't fill
+    disk through this route either.
+    """
+    try:
+        max_file_size_upload = settings_service.settings.max_file_size_upload
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if file.size is not None and file.size > max_file_size_upload * 1024 * 1024:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File size is larger than the maximum file size {max_file_size_upload}MB.",
+        )
+
+    try:
+        flow_id_str = str(flow.id)
+        file_path = await asyncio.to_thread(save_uploaded_file, file, folder_name=flow_id_str)
+
+        return UploadFileResponse(
+            flow_id=flow_id_str,
+            file_path=file_path.as_posix(),
+        )
+    except Exception as exc:
+        await logger.aexception("Error saving file")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# get endpoint to return version of flowos
+@router.get("/version")
+async def get_version():
+    return get_version_info()
+
+
+@router.post("/custom_component", status_code=HTTPStatus.OK, include_in_schema=False)
+async def custom_component(
+    raw_code: CustomComponentRequest,
+    user: CurrentActiveUser,
+    request: Request,
+) -> CustomComponentResponse:
+    settings_service = get_settings_service()
+    settings = settings_service.settings
+    all_known = None
+    if _requires_component_hash_lookups(settings, user):
+        # Lazily compute hash lookups if they haven't been built yet
+        # (e.g. during startup before the cache is fully populated).
+        get_component_hash_lookups_for_validation()
+        all_known = component_cache.all_known_hashes
+        if all_known is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Component templates are still initializing. Please try again in a few seconds.",
+            )
+
+    # In admin-only mode, non-admin users may create/refresh only known server
+    # templates. Truly custom code creation remains restricted to administrators.
+    if (
+        getattr(settings, "custom_component_admin_only", False) is True
+        and not user.is_superuser
+        and not code_hash_matches_any_template(raw_code.code, all_known)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Custom component creation is restricted to administrators",
+        )
+
+    if not settings.allow_custom_components and not code_hash_matches_any_template(raw_code.code, all_known):
+        # Allow updating to a known server template (core component update),
+        # but block truly custom code.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Custom component creation is disabled",
+        )
+
+    # In restricted mode the request only reached here by matching a known
+    # template hash. That hash is a truncated digest, so a second-preimage
+    # collision could clear the gate with attacker-controlled bytes. Execute
+    # the server's trusted copy keyed by the same hash instead of the client
+    # bytes, and fail closed if no trusted source can be recovered.
+    effective_code = raw_code.code
+    if _requires_component_hash_lookups(settings, user):
+        effective_code = get_trusted_code_for_validation(raw_code.code)
+        if effective_code is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Custom component creation is disabled",
+            )
+
+    component = Component(_code=effective_code)
+
+    built_frontend_node, component_instance = build_custom_component_template(component, user_id=user.id)
+    if raw_code.frontend_node is not None:
+        built_frontend_node = await component_instance.update_frontend_node(built_frontend_node, raw_code.frontend_node)
+
+    tool_mode: bool = built_frontend_node.get("tool_mode", False)
+    if isinstance(component_instance, Component):
+        await component_instance.run_and_validate_update_outputs(
+            frontend_node=built_frontend_node,
+            field_name="tool_mode",
+            field_value=tool_mode,
+        )
+    type_ = get_instance_name(component_instance)
+    locale = getattr(request.state, "locale", "en")
+    if locale != "en":
+        from flowos.utils.i18n import translate_component_node
+
+        try:
+            built_frontend_node = translate_component_node(type_, built_frontend_node, locale)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to translate component node", extra={"locale": locale})
+    return CustomComponentResponse(data=built_frontend_node, type=type_)
+
+
+@router.post("/custom_component/update", status_code=HTTPStatus.OK, include_in_schema=False)
+async def custom_component_update(
+    code_request: UpdateCustomComponentRequest,
+    user: CurrentActiveUser,
+    request: Request,
+):
+    """Update an existing custom component with new code and configuration.
+
+    Processes the provided code and template updates, applies parameter changes (including those loaded from the
+    database), updates the component's build configuration, and validates outputs. Returns the updated component node as
+    a JSON-serializable dictionary.
+
+    Raises:
+        HTTPException: If an error occurs during component building or updating.
+        SerializationError: If serialization of the updated component node fails.
+    """
+    settings_service = get_settings_service()
+    all_known = None
+    if _requires_component_hash_lookups(settings_service.settings, user):
+        get_component_hash_lookups_for_validation()
+        all_known = component_cache.all_known_hashes
+        if all_known is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Component templates are still initializing. Please try again in a few seconds.",
+            )
+
+    # In admin-only mode, non-admin users may refresh/update only known server
+    # templates. Truly custom code edits remain restricted to administrators.
+    if (
+        getattr(settings_service.settings, "custom_component_admin_only", False) is True
+        and not user.is_superuser
+        and not code_hash_matches_any_template(code_request.code, all_known)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Custom component editing is restricted to administrators",
+        )
+
+    if not settings_service.settings.allow_custom_components and not code_hash_matches_any_template(
+        code_request.code, all_known
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Custom component creation is disabled",
+        )
+
+    # In restricted mode the request only reached here by matching a known
+    # template hash. Because that hash is a truncated digest, execute the
+    # server's trusted copy keyed by the same hash rather than the client
+    # bytes (defeats a hash collision), failing closed if it can't be found.
+    effective_code = code_request.code
+    if _requires_component_hash_lookups(settings_service.settings, user):
+        effective_code = get_trusted_code_for_validation(code_request.code)
+        if effective_code is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Custom component creation is disabled",
+            )
+
+    try:
+        component = Component(_code=effective_code)
+        component_node, cc_instance = build_custom_component_template(
+            component,
+            user_id=user.id,
+        )
+
+        component_node["tool_mode"] = code_request.tool_mode
+
+        if hasattr(cc_instance, "set_attributes"):
+            template = code_request.get_template()
+            params = {}
+
+            for key, value_dict in template.items():
+                if isinstance(value_dict, dict):
+                    value = value_dict.get("value")
+                    input_type = str(value_dict.get("_input_type"))
+                    params[key] = parse_value(value, input_type)
+
+            load_from_db_fields = [
+                field_name
+                for field_name, field_dict in template.items()
+                if isinstance(field_dict, dict) and field_dict.get("load_from_db") and field_dict.get("value")
+            ]
+            if isinstance(cc_instance, Component):
+                # ``fallback_to_env_vars=True`` so a missing variable (e.g. an
+                # imported flow referencing ``ANTHROPIC_API_KEY`` when the
+                # current user hasn't configured one) degrades to ``None``
+                # instead of raising.  This endpoint only refreshes form
+                # metadata — it does not execute the component — so we don't
+                # need the real credential here.  The runtime build path still
+                # calls ``update_params_with_load_from_db_fields`` with its own
+                # fallback setting, so this change doesn't relax execution-time
+                # requirements.
+                params = await update_params_with_load_from_db_fields(
+                    cc_instance,
+                    params,
+                    load_from_db_fields,
+                    fallback_to_env_vars=True,
+                )
+                cc_instance.set_attributes(params)
+        updated_build_config = code_request.get_template()
+        await update_component_build_config(
+            cc_instance,
+            build_config=updated_build_config,
+            field_value=code_request.field_value,
+            field_name=code_request.field,
+        )
+        if "code" not in updated_build_config or not updated_build_config.get("code", {}).get("value"):
+            updated_build_config = add_code_field_to_build_config(updated_build_config, effective_code)
+        else:
+            # Never echo client bytes back in restricted mode. A colliding
+            # payload may have cleared the truncated-hash gate, but the server
+            # executed its trusted copy (``effective_code``); the returned node
+            # must carry that trusted code too, otherwise the attacker bytes
+            # could be persisted into a saved flow and later exec'd on the
+            # build path. In the default (unrestricted) mode ``effective_code``
+            # is ``code_request.code``, so this is a no-op.
+            updated_build_config["code"]["value"] = effective_code
+        component_node["template"] = updated_build_config
+
+        if isinstance(cc_instance, Component):
+            await cc_instance.run_and_validate_update_outputs(
+                frontend_node=component_node,
+                field_name=code_request.field,
+                field_value=code_request.field_value,
+            )
+
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    locale = getattr(request.state, "locale", "en")
+    if locale != "en":
+        from flowos.utils.i18n import translate_component_node
+
+        try:
+            component_node = translate_component_node(get_instance_name(cc_instance), component_node, locale)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to translate component node", extra={"locale": locale})
+
+    try:
+        return jsonable_encoder(component_node)
+    except Exception as exc:
+        raise SerializationError.from_exception(exc, data=component_node) from exc
+
+
+@router.get("/config")
+async def get_config(
+    user: Annotated[User | None, Depends(get_optional_user)] = None,
+) -> ConfigResponse | PublicConfigResponse:
+    """Retrieve application configuration settings.
+
+    Returns different configuration based on authentication status:
+    - Authenticated users: Full ConfigResponse with all settings
+    - Unauthenticated users: PublicConfigResponse with limited, safe-to-expose settings
+
+    Args:
+        user: The authenticated user, or None if unauthenticated.
+
+    Returns:
+        ConfigResponse | PublicConfigResponse: Configuration settings appropriate for the user's auth status.
+
+    Raises:
+        HTTPException: If an error occurs while retrieving the configuration.
+    """
+    try:
+        settings_service: SettingsService = get_settings_service()
+
+        if user is None:
+            return PublicConfigResponse.from_settings(
+                settings_service.settings,
+                settings_service.auth_settings,
+            )
+
+        return ConfigResponse.from_settings(settings_service.settings, settings_service.auth_settings)
+
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc

@@ -1,0 +1,208 @@
+---
+title: Install FlowOS
+slug: /get-started-installation
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import Cards from "@site/src/components/Cards";
+import Card from "@site/src/components/Card";
+import Icon from "@site/src/components/icon";
+
+FlowOS can be installed in multiple ways. Choose an option below to jump to the steps.
+
+<Cards cols={2}>
+  <Card icon={<Icon name="Monitor" size={20} />} title="FlowOS Desktop (recommended)" href="#install-and-run-flowos-desktop">
+    Standalone app with dependency management and simple upgrades.
+  </Card>
+  <Card icon={<Icon name="Container" size={20} />} title="Docker" href="#install-and-run-flowos-docker">
+    Run FlowOS in a container in isolation.
+  </Card>
+  <Card icon={<Icon name="Package" size={20} />} title="Python package" href="#install-and-run-the-flowos-oss-python-package">
+    Full control over environment, dependencies, and versioning.
+  </Card>
+  <Card icon={<Icon name="GitFork" size={20} />} title="Install from source" href="/contributing-how-to-contribute#install-flowos-from-source">
+    Contribute to FlowOS or work from a local clone.
+  </Card>
+</Cards>
+
+## Install and run FlowOS Desktop {#install-and-run-flowos-desktop}
+
+FlowOS Desktop is a desktop version of FlowOS that simplifies dependency management and upgrades.
+However, some features aren't available for FlowOS Desktop, such as the **Shareable Playground** and **Voice Mode**.
+
+<Tabs>
+<TabItem value="macos" label="macOS" default>
+
+FlowOS Desktop requires macOS 13 or later.
+
+1. Navigate to [FlowOS Desktop](https://www.flowos.org/desktop).
+2. Click **Download FlowOS**, enter your contact information, and then click **Download**.
+3. Mount and install the FlowOS application.
+4. When the installation completes, open the FlowOS application, and then create your first flow with the [Quickstart](/get-started-quickstart).
+
+</TabItem>
+<TabItem value="Windows" label="Windows">
+
+    :::warning
+    If you are upgrading FlowOS Desktop on Windows, **don't** use the in-app update feature to upgrade to FlowOS version 1.6.0.
+    For more information, see [Known issues for 1.6.0](/release-notes#windows-desktop-update-issue).
+    :::
+
+1. Navigate to [FlowOS Desktop](https://www.flowos.org/desktop).
+2. Click **Download FlowOS**, enter your contact information, and then click **Download**.
+3. Open the **File Explorer**, and then navigate to **Downloads**.
+4. Double-click the downloaded `.msi` file, and then use the install wizard to install FlowOS Desktop.
+
+    :::tip
+    Windows installations of FlowOS Desktop require a C++ compiler that may not be present on your system. If you receive a `C++ Build Tools Required!` error, follow the on-screen prompt to install Microsoft C++ Build Tools, or [install Microsoft Visual Studio](https://visualstudio.microsoft.com/downloads/).
+    :::
+
+5. When the installation completes, open the FlowOS application, and then create your first flow with the [Quickstart](/get-started-quickstart).
+
+</TabItem>
+</Tabs>
+
+For upgrade information, see the [Release notes](/release-notes).
+
+To manage dependencies in FlowOS Desktop, see [Install custom dependencies in FlowOS Desktop](/install-custom-dependencies#flowos-desktop).
+
+## Install and run FlowOS with Docker {#install-and-run-flowos-docker}
+
+You can use the FlowOS Docker image to start a FlowOS container.
+For more information, see [Deploy FlowOS on Docker](/deployment-docker).
+
+1. Install and start [Docker](https://docs.docker.com/).
+
+2. Pull the latest [FlowOS Docker image](https://hub.docker.com/r/flowosai/flowos) and start it:
+
+    ```bash
+    docker run -p 7860:7860 flowosai/flowos:latest
+    ```
+
+3. To access FlowOS, navigate to `http://localhost:7860/`.
+
+4. Create your first flow with the [Quickstart](/get-started-quickstart).
+
+## Install and run the FlowOS OSS Python package {#install-and-run-the-flowos-oss-python-package}
+
+1. Make sure you have the required dependencies and infrastructure:
+
+    - [Python](https://www.python.org/downloads/release/python-3100/)
+       - macOS and Linux: Version 3.10 to 3.13
+       - Windows: Version 3.10 to 3.12
+    - [uv](https://docs.astral.sh/uv/getting-started/installation/)
+    - Sufficient infrastructure:
+       - Minimum: Dual-core CPU and 2 GB RAM
+       - Recommended: Multi-core CPU and at least 4 GB RAM
+    - Browser:
+       - Google Chrome is recommended but not required
+
+2. Create a virtual environment with [uv](https://docs.astral.sh/uv/pip/environments).
+
+    <details>
+    <summary>Need help with virtual environments?</summary>
+
+    Virtual environments ensure FlowOS is installed in an isolated, fresh environment.
+    To create a new virtual environment, do the following.
+
+        <Tabs>
+        <TabItem value="linux-macos" label="Linux or macOS" default>
+
+        1. Navigate to where you want your virtual environment to be created, and then create it with `uv`:
+
+            ```shell
+            uv venv VENV_NAME
+            ```
+
+            Replace `VENV_NAME` with a name for your virtual environment.
+
+        2. Start the virtual environment:
+
+            ```shell
+            source VENV_NAME/bin/activate
+            ```
+
+            Your shell's prompt changes to display that you're currently working in a virtual environment:
+
+            ```text
+            (VENV_NAME) ➜  flowos git:(main) ✗
+            ```
+
+        3. To deactivate the virtual environment and return to your regular shell, type `deactivate`.
+
+            When activated, the virtual environment temporarily modifies your `PATH` variable to prioritize packages installed within the virtual environment.
+            To avoid conflicts with other projects, it's a good idea to deactivate your virtual environment when you're done working in it.
+
+            To delete the virtual environment, type `rm -rf VENV_NAME`.
+            This completely removes the virtual environment directory and its contents.
+
+        </TabItem>
+        <TabItem value="Windows" label="Windows">
+
+        1. Navigate to where you want your virtual environment to be created, and create it with `uv`.
+
+            ```shell
+            uv venv VENV_NAME
+            ```
+
+            Replace `VENV_NAME` with a name for your virtual environment.
+
+        2. Start the virtual environment:
+
+            ```shell
+            VENV_NAME\Scripts\activate
+            ```
+
+            Your shell's prompt changes to display that you're currently working in a virtual environment:
+
+            ```text
+            (VENV_NAME) PS C:/users/username/flowos-dir>
+            ```
+
+        3. To deactivate the virtual environment and return to your regular shell, type `deactivate`.
+
+            When activated, the virtual environment temporarily modifies your `PATH` variable to prioritize packages installed within the virtual environment.
+            To avoid conflicts with other projects, it's a good idea to deactivate your virtual environment when you're done working in it.
+
+            To delete the virtual environment, type `Remove-Item VENV_NAME`.
+            This completely removes the virtual environment directory and its contents.
+
+        </TabItem>
+        </Tabs>
+
+    </details>
+
+3. In your virtual environment, install FlowOS:
+
+    ```bash
+    uv pip install flowos
+    ```
+
+4. Start FlowOS:
+
+    ```bash
+    uv run flowos run
+    ```
+
+    It can take a few minutes for FlowOS to start.
+
+5. To confirm that a local FlowOS instance is running, navigate to the default FlowOS URL `http://127.0.0.1:7860`.
+
+6. Create your first flow with the [Quickstart](/get-started-quickstart).
+
+### Manage the FlowOS OSS version
+
+To upgrade FlowOS to the latest version, run `uv pip install flowos -U`.
+However, the FlowOS team recommends taking steps to backup your existing installation before you upgrade FlowOS.
+For more information, see [Prepare to upgrade](/release-notes#prepare-to-upgrade).
+
+To install a specific version of the FlowOS package, add the required version to the command, such as `uv pip install flowos==1.4.22`.
+
+To reinstall FlowOS and all of its dependencies, run `uv pip install flowos --force-reinstall`.
+
+## Next steps
+
+* [Quickstart](/get-started-quickstart): Build and run your first flow in minutes.
+* [Build flows](/concepts-flows): Learn about building flows.
+* [Troubleshoot FlowOS](/troubleshoot): Get help with common FlowOS install and startup issues.

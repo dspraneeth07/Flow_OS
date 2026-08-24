@@ -1,0 +1,63 @@
+from uuid import UUID
+
+from sqlmodel import and_, select, update
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from flowos.initial_setup.setup import get_or_create_default_folder
+from flowos.services.database.models.deployment.orm_guards import ensure_flow_moves_allowed
+from flowos.services.database.models.flow.model import Flow
+
+from .constants import DEFAULT_FOLDER_DESCRIPTION, DEFAULT_FOLDER_NAME
+from .model import Folder
+
+
+async def create_default_folder_if_it_doesnt_exist(session: AsyncSession, user_id: UUID):
+    stmt = select(Folder).where(Folder.user_id == user_id)
+    folder = (await session.exec(stmt)).first()
+    if not folder:
+        folder = Folder(
+            name=DEFAULT_FOLDER_NAME,
+            user_id=user_id,
+            description=DEFAULT_FOLDER_DESCRIPTION,
+        )
+        session.add(folder)
+        await session.flush()
+        await session.refresh(folder)
+        flow_folder_pairs = [
+            (flow_id, old_folder_id)
+            for flow_id, old_folder_id in (
+                await session.exec(
+                    select(Flow.id, Flow.folder_id).where(
+                        and_(
+                            Flow.folder_id.is_(None),
+                            Flow.user_id == user_id,
+                        )
+                    ),
+                )
+            ).all()
+        ]
+        await ensure_flow_moves_allowed(
+            db=session,
+            flow_folder_pairs=flow_folder_pairs,
+            new_folder_id=folder.id,
+        )
+        await session.exec(
+            update(Flow)
+            .where(
+                and_(
+                    Flow.folder_id is None,
+                    Flow.user_id == user_id,
+                )
+            )
+            .values(folder_id=folder.id)
+        )
+    return folder
+
+
+async def get_default_folder_id(session: AsyncSession, user_id: UUID):
+    folder = (
+        await session.exec(select(Folder).where(Folder.name == DEFAULT_FOLDER_NAME, Folder.user_id == user_id))
+    ).first()
+    if not folder:
+        folder = await get_or_create_default_folder(session, user_id)
+    return folder.id

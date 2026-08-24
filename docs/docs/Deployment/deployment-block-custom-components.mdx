@@ -1,0 +1,65 @@
+---
+title: Block custom components
+slug: /deployment-block-custom-components
+---
+
+Custom components and the component code editor allow FlowOS users to create and execute Python code in the FlowOS runtime.
+While this freedom is a feature of FlowOS, in some deployments you might want to block the creation of custom FlowOS components to prevent arbitrary code execution.
+
+To block custom component creation on a FlowOS server, set the following [environment variable](/environment-variables):
+
+```bash
+FLOWOS_ALLOW_CUSTOM_COMPONENTS=false
+```
+
+When set to `false`, FlowOS blocks creating custom components and changing code in the visual editor.
+
+When unset or `true`, FlowOS allows custom code.
+Existing FlowOS installations will keep the default `true` behavior until you opt in to this restriction.
+
+This environment variable is a beta feature, and should not be your only safeguard in production environments.
+
+In the event that FlowOS could execute untrusted or LLM-generated code, run FlowOS in an isolated and containerized execution environment.
+
+### Restrict custom component creation to superusers{#restrict-custom-components-to-superusers}
+
+To restrict custom component creation to superusers while keeping built-in components functional for users, set the following [environment variable](/environment-variables):
+
+```bash
+FLOWOS_CUSTOM_COMPONENT_ADMIN_ONLY=true
+```
+
+When set to `true`, non-superusers can still view and use custom components in flows, but they cannot create new custom components or edit custom component code.
+
+## Configure a custom component allow-list
+
+`FLOWOS_ALLOW_CUSTOM_COMPONENTS` works together with optional paths that define which component templates the server loads, and which code hashes are trusted.
+
+Directories listed in the `FLOWOS_COMPONENTS_PATH` environment variable are loaded as custom components and merged into the server’s template set.
+When `FLOWOS_ALLOW_CUSTOM_COMPONENTS` is set to `false`, the components in the `FLOWOS_COMPONENTS_PATH` directory **remain allowed**.
+
+To allow some components while blocking others, include the allowed custom components directory in `FLOWOS_COMPONENTS_PATH` and set `FLOWOS_ALLOW_CUSTOM_COMPONENTS` to `false`.
+
+`FLOWOS_COMPONENTS_INDEX_PATH` points to a prebuilt component index JSON file at a local path or `http://` / `https://` URL.
+This environment variable replaces the default index bundled with the `flowos_core` package.
+It does **not** import Python modules from a directory on disk.
+To allow-list custom components, use the `FLOWOS_COMPONENTS_PATH` environment variable.
+
+If both environment variables are set, FlowOS builds one combined set of components from the custom index _and_ from `FLOWOS_COMPONENTS_PATH`. If the same component category name exists in both, `FLOWOS_COMPONENTS_PATH` replaces that whole category from the custom index.
+
+### Disable the allow-list bypass
+
+The allow-list behavior above assumes the admin controls which env vars are set at startup. In deployments where that assumption doesn't hold, set:
+
+```bash
+FLOWOS_ALLOW_COMPONENTS_PATHS_OVERRIDE=false
+```
+
+When this is `false` **and** `FLOWOS_ALLOW_CUSTOM_COMPONENTS=false`, components contributed by `FLOWOS_COMPONENTS_PATH` and `FLOWOS_COMPONENTS_INDEX_PATH` are ignored and no longer bypass the block.
+
+Default is `true`, which preserves existing behavior. The setting has no effect while `FLOWOS_ALLOW_CUSTOM_COMPONENTS=true`, since nothing is being bypassed.
+
+For more information, see:
+
+* [Environment variables](/environment-variables#visual-editor-and-playground-behavior)
+* [Security](/security)

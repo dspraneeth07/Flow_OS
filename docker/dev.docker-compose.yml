@@ -1,0 +1,42 @@
+networks:
+  dev-flowos:
+
+services:
+  flowos:
+    build:
+      context: ..
+      dockerfile: docker/dev.Dockerfile
+    image: dev-flowos
+    container_name: dev-flowos
+    restart: always
+    ports:
+      - "7860:7860"
+      - "3000:3000"
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - FLOWOS_DATABASE_URL=postgresql://flowos:flowos@postgres:5432/flowos
+      - FLOWOS_SUPERUSER=flowos
+      - FLOWOS_SUPERUSER_PASSWORD=flowos
+      - FLOWOS_CONFIG_DIR=/var/lib/flowos
+    env_file:
+      - ../.env
+    volumes:
+      - ../:/app
+    depends_on:
+      - postgres
+    networks:
+      -  dev-flowos
+
+
+  postgres:
+    container_name: postgres
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: flowos
+      POSTGRES_PASSWORD: flowos
+      POSTGRES_DB: flowos
+    ports:
+      - "5432:5432"
+    networks:
+      -  dev-flowos
+

@@ -1,0 +1,105 @@
+---
+title: FLOWOS_CORE and FlowOS version compatibility
+slug: /flowos_core-compatibility
+---
+
+FlowOS and FLOWOS_CORE are versioned together on the same `major.minor` line, so you can always tell which FLOWOS_CORE release runs which flows.
+
+## Compatibility contract
+
+**FLOWOS_CORE `X.Y.N` is guaranteed compatible with any flow exported from FlowOS `X.Y.M`.**
+
+The major and minor numbers must match.
+The patches `.N` for FLOWOS_CORE and `.M` for FlowOS are released independently. An FLOWOS_CORE patch fix does not require a FlowOS patch release, and vice versa.
+
+When FLOWOS_CORE and a flow share the same `major` version but differ on `minor`, such as a flow exported from FlowOS 1.9.x run with FLOWOS_CORE 1.10.x,  individual components may have been updated since the flow was saved.
+Use `flowos_core upgrade` to check compatibility and apply safe automatic fixes before running or serving such a flow.
+For more information, see [Check and upgrade flows with flowos_core upgrade](#check-and-upgrade-flows-with-flowos_core-upgrade).
+
+## Compatibility matrix
+
+| FlowOS version | Compatible FLOWOS_CORE version | Notes |
+|---|---|---|
+| 1.10.x | 1.10.x | Fully compatible. Same `major.minor` line. |
+| 1.11.x | 1.11.x | Fully compatible. Same `major.minor` line. |
+| 1.9.x or earlier | 1.10.x | Use `flowos_core upgrade --upgrade-flow=safe` to apply safe component schema upgrades before running. |
+| Any 1.x.x | 0.5.x | FLOWOS_CORE 0.5.x was a standalone release before version alignment. It is no longer compatible with FlowOS 1.10+ flows. |
+
+## Check and upgrade flows with `flowos_core upgrade`
+
+The `flowos_core upgrade` command inspects a flow against the built-in component registry and reports any components that have become incompatible or that have safe automatic upgrades available.
+
+`flowos_core upgrade` compares each component in the flow against a bundled index at `_assets/component_index.json` that ships with the FLOWOS_CORE release.
+
+Run it with no flags to get a read-only compatibility report. The command reads your flow JSON, walks through every component node, and prints one line per node with its status. It does not modify the file.
+
+```bash
+flowos_core upgrade my-flow.json
+```
+
+Example output:
+
+```text
+  [SAFE] Agent (AgentComponent) - id: abc123
+  [OK] Chat Output (ChatOutput) - id: def456
+```
+
+| CLI output | What it means | Example |
+|---|---|---|
+| `[OK]` | Component matches the current registry. | No action needed. |
+| `[SAFE]` | Component code changed, but ports and fields your flow uses still line up. `flowos_core upgrade --write` can apply this update automatically. | An output that previously emitted only `Message` now also supports `Data`. |
+| `[BREAKING]` | A port or field your flow relies on was removed. | An input that accepted `Message` and `Data` now accepts only `Message` and your flow uses a `Data` component. |
+| `[BLOCKED]` | The component type no longer exists in this FLOWOS_CORE build. | A bundle-only component is not installed in your environment. |
+
+To apply fixes or enforce stricter checks, run:
+
+```bash
+# Apply all safe upgrades and overwrite the file
+flowos_core upgrade my-flow.json --write
+
+# Fail if any safe upgrades are still pending (use after a dry run before running `--write`)
+flowos_core upgrade my-flow.json --strict
+```
+
+## Inline compatibility checking with `--upgrade-flow`
+
+Both `flowos_core run` and `flowos_core serve` accept an `--upgrade-flow` option so you can apply compatibility checks at execution without a separate `flowos_core upgrade` step.
+
+```bash
+# Check only — fail if any component is blocked
+flowos_core run my-flow.json --upgrade-flow=check "Hello world"
+
+# Apply safe upgrades in memory, then run
+flowos_core run my-flow.json --upgrade-flow=safe "Hello world"
+
+# Same options for serve
+flowos_core serve my-flow.json --upgrade-flow=safe
+```
+
+| Mode | Behavior |
+|---|---|
+| `check` | Reports compatibility issues and exits non-zero if any component is blocked. No changes are written to disk. |
+| `safe` | Applies all safe upgrades in memory, then runs or serves the flow. Blocked components still cause a non-zero exit. |
+
+## Pin versions
+
+Pin `flowos_core~=1.10.0` in `requirements.txt` to track all patch releases for a given FlowOS minor without crossing into the next minor automatically.
+
+```text
+# requirements.txt — allows 1.10.1, 1.10.2, … but not 1.11.0
+flowos_core~=1.10.0
+```
+
+## Migrating from FLOWOS_CORE 0.5.x to 1.10.0
+
+FLOWOS_CORE was realigned from its standalone `0.5.x` line onto FlowOS's `major.minor` line, so the version number jumps from `0.5.0` to `1.10.0` in one release. This is a version-numbering change, not 95 minor releases of new features.
+
+This jump can affect existing dependency pins in unexpected ways:
+
+| Pin style | Effect |
+|---|---|
+| `flowos_core==0.5.x` or `flowos_core<1.0` | Does not upgrade. The deployment stays on 0.5.x. |
+| `flowos_core>=0.5,<1` | Does not upgrade. The upper bound excludes 1.10.0. |
+| `flowos_core>=0.5` (no upper bound) | Upgrades automatically to 1.10.0 on the next install. |
+
+Going forward, pin with `flowos_core~=1.10.0` so you receive compatible patches without silently crossing minor lines.

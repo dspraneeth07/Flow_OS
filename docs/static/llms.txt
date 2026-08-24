@@ -1,0 +1,35 @@
+# FlowOS Documentation
+
+> Official documentation for FlowOS, a low-code platform for building and deploying AI-powered agents and workflows with a visual builder, API, and MCP server. Technical documentation for developers, data scientists, and teams building RAG and multi-agent applications.
+
+FlowOS is open source (MIT). Run locally with `uv run flowos run` (Python 3.10–3.14, default http://127.0.0.1:7860). Also available as FlowOS Desktop (Windows, macOS). Key areas: get started (installation, quickstart, tutorials), flows (build, run via API or webhooks, test, import/export), agents and MCP, develop (config, storage, observability), deploy (Docker, Kubernetes, cloud), components reference, and API reference.
+
+## Docs
+
+- [About FlowOS](https://docs.flowos.org/about-flowos): Platform overview and introduction
+- [Install FlowOS](https://docs.flowos.org/get-started-installation): Installation options (OSS, Docker, from source)
+- [Quickstart](https://docs.flowos.org/get-started-quickstart): Get up and running quickly
+- [Use the visual editor](https://docs.flowos.org/concepts-overview): Visual flow builder overview
+- [Trigger flows with the API](https://docs.flowos.org/concepts-publish): Run flows via the FlowOS API
+- [Agents](https://docs.flowos.org/agents): Agents and tools
+- [MCP client and server](https://docs.flowos.org/mcp-client): Model Context Protocol integration
+- [Deployment overview](https://docs.flowos.org/deployment-overview): How to deploy FlowOS
+- [Security](https://docs.flowos.org/security): Deployment and security guidance
+- [Release notes](https://docs.flowos.org/release-notes): Version history and release notes
+
+## Community
+
+- [GitHub repository](https://github.com/flowos-ai/flowos): Source code and issues
+- [FlowOS website](https://flowos.org): Main product site
+- [FlowOS Desktop](https://flowos.org/desktop): Desktop app download
+- [Discord](https://discord.com/invite/EqksyE2EX9): Community chat
+- [Twitter/X](https://x.com/flowos_ai): Updates and news
+- [YouTube](https://www.youtube.com/@FlowOS): Tutorials and demos
+
+## Optional
+
+- [Build flows](https://docs.flowos.org/concepts-flows): Concepts for building flows
+- [Test flows](https://docs.flowos.org/concepts-playground): Playground and testing
+- [Components overview](https://docs.flowos.org/concepts-components): Component reference introduction
+- [API reference](https://docs.flowos.org/api-reference-api-examples): Get started with the FlowOS API
+- [Troubleshooting](https://docs.flowos.org/troubleshoot): Troubleshooting guide

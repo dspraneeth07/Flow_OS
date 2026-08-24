@@ -1,0 +1,130 @@
+import { expect, test } from "../../fixtures";
+import { adjustScreenView } from "../../utils/adjust-screen-view";
+import { openBlankFlow } from "../../utils/flow/open-blank-flow";
+import {
+  closeAdvancedOptions,
+  disableInspectPanel,
+  enableInspectPanel,
+  openAdvancedOptions,
+} from "../../utils/open-advanced-options";
+
+test(
+  "KeypairListComponent",
+  { tag: ["@release", "@workspace"] },
+  async ({ page }) => {
+    await openBlankFlow(page);
+
+    await disableInspectPanel(page);
+
+    // Allow for legacy components
+    await page.getByTestId("sidebar-options-trigger").click();
+    await page.getByTestId("sidebar-legacy-switch").click();
+
+    await page.getByTestId("sidebar-search-input").click();
+    await page.getByTestId("sidebar-search-input").fill("amazon bedrock");
+
+    await page.waitForSelector('[data-testid="amazonAmazon Bedrock"]', {
+      timeout: 3000,
+    });
+
+    await page
+      .getByTestId("amazonAmazon Bedrock")
+      .dragTo(page.locator('//*[@id="react-flow-id"]'));
+
+    await disableInspectPanel(page);
+
+    await page.getByTestId("div-generic-node").click();
+
+    await openAdvancedOptions(page);
+
+    await page.getByTestId("showmodel_kwargs").click();
+    await expect(page.getByTestId("showmodel_kwargs")).toBeChecked();
+    await closeAdvancedOptions(page);
+
+    await adjustScreenView(page, {
+      numberOfZoomOut: 2,
+    });
+
+    await page.locator('//*[@id="keypair0"]').click();
+    await page.locator('//*[@id="keypair0"]').fill("testtesttesttest");
+    await page.locator('//*[@id="keypair100"]').click();
+    await page
+      .locator('//*[@id="keypair100"]')
+      .fill("test test test test test test");
+
+    await page.getByTestId("div-generic-node").click();
+
+    const valueWithSpace = await page.getByTestId("keypair100").inputValue();
+    await page.getByTestId("div-generic-node").click();
+
+    if (valueWithSpace !== "test test test test test test") {
+      expect(false).toBeTruthy();
+    }
+
+    const plusButtonLocatorNode = page.locator('//*[@id="plusbtn0"]');
+    const elementCountNode = await plusButtonLocatorNode?.count();
+    if (elementCountNode > 0) {
+      await plusButtonLocatorNode.click();
+    }
+    await page.getByTestId("div-generic-node").click();
+
+    await page.locator('//*[@id="keypair0"]').click();
+    await page.locator('//*[@id="keypair0"]').fill("testtesttesttest1");
+    await page.getByTestId("div-generic-node").click();
+
+    const keyPairVerification = page.locator('//*[@id="keypair100"]');
+    const elementKeyCount = await keyPairVerification?.count();
+
+    if (elementKeyCount === 1) {
+      expect(true).toBeTruthy();
+    } else {
+      expect(false).toBeTruthy();
+    }
+
+    await openAdvancedOptions(page);
+
+    await closeAdvancedOptions(page);
+
+    const plusButtonLocator = page.locator('//*[@id="plusbtn0"]');
+    const elementCount = await plusButtonLocator?.count();
+    if (elementCount === 1) {
+      expect(true).toBeTruthy();
+      await page.getByTestId("div-generic-node").click();
+
+      await openAdvancedOptions(page);
+
+      await page.locator('//*[@id="editNodekeypair0"]').click();
+      await page
+        .locator('//*[@id="editNodekeypair0"]')
+        .fill("testtesttesttest");
+
+      const keyPairVerification = page.locator('//*[@id="editNodekeypair0"]');
+      const elementKeyCount = await keyPairVerification?.count();
+
+      if (elementKeyCount === 1) {
+        await closeAdvancedOptions(page);
+
+        await page.getByTestId("div-generic-node").click();
+
+        const key1 = await page.locator('//*[@id="keypair0"]').inputValue();
+        const value1 = await page.locator('//*[@id="keypair100"]').inputValue();
+        await page.getByTestId("div-generic-node").click();
+
+        if (
+          key1 === "testtesttesttest" &&
+          value1 === "test test test test test test"
+        ) {
+          expect(true).toBeTruthy();
+        } else {
+          expect(false).toBeTruthy();
+        }
+      } else {
+        expect(false).toBeTruthy();
+      }
+    } else {
+      expect(false).toBeTruthy();
+    }
+
+    await enableInspectPanel(page);
+  },
+);

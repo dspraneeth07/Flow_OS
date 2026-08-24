@@ -1,0 +1,121 @@
+name: Publish to PyPI
+
+# Publishes every FlowOS package to PyPI using Trusted Publishing (OIDC).
+# No API token is stored anywhere -- GitHub mints a short-lived OIDC token per run.
+#
+# IMPORTANT -- why each package gets its OWN environment:
+# PyPI requires a pending publisher's (owner, repo, workflow, environment) tuple
+# to be UNIQUE. Registering all 9 against a single `pypi` environment fails with
+# "A pending trusted publisher matching this configuration has already been
+# registered for a different project name." So the environment is named after the
+# package, which makes every tuple distinct.
+#
+# Register each package on PyPI with:
+#   Owner       : dspraneeth07
+#   Repository  : FlowOS
+#   Workflow    : publish.yml
+#   Environment : <the package name>   e.g. flowos-sdk
+#
+# And create a matching GitHub environment of that same name under
+# Settings -> Environments.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    name: Build all distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build every package
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          for pkg in flowos-sdk flowos-core flowos-base flowos \
+                     flowos-arxiv flowos-docling flowos-duckduckgo \
+                     flowos-ibm flowos-stepflow; do
+            echo "::group::build $pkg"
+            uv build --package "$pkg"
+            echo "::endgroup::"
+          done
+          ls -la dist/
+
+      - name: Fail if any artifact exceeds PyPI's 100 MB limit
+        run: |
+          # The root sdist once hit 113 MB by sweeping the whole repo in (a 51 MB
+          # docs GIF). PyPI rejects >100 MB, so catch it here, not mid-upload.
+          oversized=$(find dist -type f -size +100M -print)
+          if [ -n "$oversized" ]; then
+            echo "::error::artifact(s) exceed PyPI's 100 MB limit:"; echo "$oversized"; exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish ${{ matrix.package }}
+    needs: build
+    runs-on: ubuntu-latest
+    # Each package publishes from its own environment so that its PyPI trusted
+    # publisher tuple is unique. The environment name == the PyPI project name.
+    environment: ${{ matrix.package }}
+    permissions:
+      id-token: write # the only permission trusted publishing needs
+    strategy:
+      # Don't let one package's rate-limit failure abort the others.
+      fail-fast: false
+      # One at a time: PyPI throttles how many NEW project names an account may
+      # register in a window ("429 Too many new projects created"), and parallel
+      # creation trips it immediately.
+      max-parallel: 1
+      matrix:
+        package:
+          - flowos-sdk
+          - flowos-core
+          - flowos-base
+          - flowos-arxiv
+          - flowos-docling
+          - flowos-duckduckgo
+          - flowos-ibm
+          - flowos-stepflow
+          - flowos
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Isolate this package's artifacts
+        run: |
+          # gh-action-pypi-publish uploads a whole directory, and each project's
+          # trusted publisher only authorises ITS own project -- so ship exactly
+          # one package's files per job.
+          set -euo pipefail
+          underscored=$(echo "${{ matrix.package }}" | tr '-' '_')
+          mkdir -p upload
+          # Anchor on the version to avoid flowos-* prefix collisions
+          # (e.g. "flowos" must not pick up "flowos_sdk").
+          cp dist/${underscored}-*.whl upload/ 2>/dev/null || true
+          cp dist/${underscored}-*.tar.gz upload/ 2>/dev/null || true
+          echo "uploading:"; ls -la upload/
+          test -n "$(ls -A upload/)" || { echo "::error::no artifacts matched"; exit 1; }
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: upload/
+          # Already-published files are skipped instead of failing, so this run is
+          # safe to repeat while the new-project rate limit drains.
+          skip-existing: true

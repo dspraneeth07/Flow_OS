@@ -1,0 +1,117 @@
+---
+title: What is FlowOS?
+slug: /
+---
+
+import Cards from "@site/src/components/Cards";
+import Card from "@site/src/components/Card";
+import Icon from "@site/src/components/icon";
+
+FlowOS is an open-source, Python-based, customizable framework for building AI applications.
+It supports important AI functionality like agents and the Model Context Protocol (MCP), and it doesn't require you to use specific large language models (LLMs) or vector stores.
+
+The visual editor simplifies prototyping of application workflows, enabling developers to quickly turn their ideas into powerful, real-world solutions.
+
+:::tip Try it
+Build and run your first flow in minutes: [Install FlowOS](/get-started-installation), and then try the [Quickstart](/get-started-quickstart).
+:::
+
+<Cards cols={3}>
+  <Card icon={<Icon name="Rocket" size={20} />} title="Quickstart" href="/get-started-quickstart">
+    Build and run your first flow in minutes.
+  </Card>
+  <Card icon={<Icon name="Blocks" size={20} />} title="Components" href="/concepts-components">
+    Explore all available components and integrations.
+  </Card>
+  <Card icon={<Icon name="Cloud" size={20} />} title="Deploy" href="/deployment-overview">
+    Deploy FlowOS to production environments.
+  </Card>
+</Cards>
+
+## Application development and prototyping
+
+FlowOS can help you develop a wide variety of AI applications, such as chatbots, document analysis systems, content generators, and agentic applications.
+
+FlowOS includes several pre-built templates that are ready to use or customize to your needs.
+
+### Create flows in minutes
+
+The primary purpose of FlowOS is to create and serve flows, which are functional representations of application workflows.
+
+To [build a flow](/concepts-flows), you connect and configure component nodes. Each component is a single step in the workflow.
+
+With FlowOS's [visual editor](/concepts-overview), you can drag and drop components to quickly build and test a functional AI application workflow.
+For example, you could build a chatbot flow for an e-commerce store that uses an LLM and a product data store to allow customers to ask questions about the store's products.
+
+![Basic Prompting flow in FlowOS](/img/workspace-basic-prompting.png)
+
+### Test flows in real-time
+
+You can use the [**Playground**](/concepts-playground) to test flows without having to build your entire application stack.
+You can interact with your flows and get real-time feedback about flow logic and response generation.
+
+You can also run individual components to test dependencies in isolation.
+
+### Run and serve flows
+
+You can use your flows as prototypes for more formal application development, or you can use the FlowOS API to embed your flows into your application code.
+
+For more extensive development, you can build FlowOS as a dependency or deploy a FlowOS server to serve flows over the public internet.
+
+<Cards cols={2}>
+  <Card icon={<Icon name="Zap" size={20} />} title="Trigger flows with the API" href="/concepts-publish">
+    Use the FlowOS API to run flows from your application code.
+  </Card>
+  <Card icon={<Icon name="Container" size={20} />} title="Containerize your app" href="/develop-application">
+    Build and deploy FlowOS as a containerized application.
+  </Card>
+</Cards>
+
+## Endless modifications and integrations
+
+FlowOS provides [components](/concepts-components) that support many services, tools, and functionality that are required for AI applications.
+
+Some components are generalized, such as inputs, outputs, and data stores.
+Others are specialized, such as agents, language models, and embedding providers.
+
+All components offer parameters that you can set to fixed or variable values. You can also use tweaks to temporarily override flow settings at runtime.
+
+### Agent and MCP support
+
+<Cards cols={2}>
+  <Card icon={<Icon name="Bot" size={20} />} title="FlowOS Agents" href="/agents">
+    Build and configure AI agents with FlowOS.
+  </Card>
+  <Card icon={<Icon name="Wrench" size={20} />} title="Agent tools" href="/agents-tools">
+    Use components and flows as agent tools.
+  </Card>
+  <Card icon={<Icon name="Plug" size={20} />} title="MCP server" href="/mcp-server">
+    Expose FlowOS as an MCP server.
+  </Card>
+  <Card icon={<Icon name="Cable" size={20} />} title="MCP client" href="/mcp-client">
+    Connect FlowOS to external MCP servers.
+  </Card>
+</Cards>
+
+### Extensibility
+
+In addition to the core components, FlowOS supports custom components.
+
+You can use custom components developed by others, and you can develop your own custom components for personal use or to share with other FlowOS users.
+
+<Cards cols={3}>
+  <Card icon={<Icon name="GitPullRequest" size={20} />} title="Contribute" href="/contributing-how-to-contribute">
+    Help build FlowOS.
+  </Card>
+  <Card icon={<Icon name="Code" size={20} />} title="Custom components" href="/components-custom-components">
+    Create your own Python components.
+  </Card>
+  <Card icon={<Icon name="HelpCircle" size={20} />} title="Get help" href="/contributing-github-issues">
+    Request enhancements and report issues.
+  </Card>
+</Cards>
+
+## Next steps
+
+* [Install FlowOS](/get-started-installation)
+* [Quickstart](/get-started-quickstart)

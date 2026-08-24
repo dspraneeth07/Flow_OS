@@ -1,0 +1,98 @@
+import { expect } from "@playwright/test";
+import { test } from "../../fixtures";
+import { TEXTS } from "../../utils/constants/texts";
+import { openBlankFlow } from "../../utils/flow/open-blank-flow";
+
+test(
+  "CodeAreaModalComponent",
+  { tag: ["@release", "@workspace"] },
+  async ({ page }) => {
+    await openBlankFlow(page);
+
+    await page.getByTestId("canvas_controls_dropdown").click();
+
+    await page.waitForSelector('[data-testid="zoom_out"]', {
+      timeout: 3000,
+    });
+    await page.getByTestId("canvas_controls_dropdown").click({ force: true });
+
+    await page.getByTestId("sidebar-custom-component-button").click();
+
+    await expect(page.getByTestId("code-button-modal").last()).toBeVisible({
+      timeout: 3000,
+    });
+
+    await page.getByTestId("code-button-modal").last().click();
+
+    const codeInputCode = `
+# from flowos.field_typing import Data
+from flowos.custom import Component
+from flowos.io import CodeInput, Output
+from flowos.schema import Data
+from time import sleep
+from flowos.schema.message import Message
+
+class CustomComponent(Component):
+    display_name = "Custom Component"
+    description = "Use as a template to create your own component."
+    documentation: str = "https://docs.flowos.org/components-custom-components"
+    icon = "custom_components"
+    name = "CustomComponent"
+
+    inputs = [
+        CodeInput(
+            name="function_code",
+            display_name="Function Code",
+            info="The code for the function.",
+        ),
+    ]
+
+    outputs = [
+        Output(display_name="Output", name="output", method="build_output"),
+    ]
+
+    def build_output(self) -> Message:
+        data = Data(value=self.function_code)
+        self.status = data
+        sleep(60)
+        return data`;
+
+    await page.locator(".ace_content").click();
+    await page.keyboard.press(`ControlOrMeta+A`);
+    await page.locator("textarea").fill(codeInputCode);
+
+    await page.getByText(TEXTS.checkAndSave).last().click();
+
+    await page.getByTestId("div-generic-node").click();
+
+    await page.getByTestId("codearea_code_function_code").click();
+
+    const wCode =
+      'def python_function(text: str) -> st:    """This is a default python function that returns the input text"""    return text';
+
+    const customComponentCode = `from typing import Callable
+from flowos.field_typing import Code
+from flowos.interface.custom.custom_component import CustomComponent
+from flowos.interface.custom.utils import get_function
+
+class PythonFunctionComponent(CustomComponent):
+    def python_function(text: str) -> str:
+        """This is a default python function that returns the input text"""
+        return text`;
+
+    await page.locator(".ace_content").click();
+    await page.locator("textarea").press("ControlOrMeta+a");
+    await page.locator("textarea").fill(wCode);
+    await page.locator('//*[@id="checkAndSaveBtn"]').click();
+    await expect(
+      page.getByText("invalid syntax (<unknown>, line 1)"),
+    ).toBeVisible({ timeout: 3000 });
+    await page.locator("textarea").press("ControlOrMeta+a");
+    await page.locator("textarea").fill(customComponentCode);
+    await page.locator('//*[@id="checkAndSaveBtn"]').click();
+    await expect(page.getByTestId("codearea_code_function_code")).toHaveText(
+      customComponentCode,
+      { timeout: 3000 },
+    );
+  },
+);

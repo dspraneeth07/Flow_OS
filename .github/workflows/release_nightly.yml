@@ -1,0 +1,531 @@
+name: FlowOS Nightly Build
+run-name: FlowOS Nightly Release by @${{ github.actor }}
+
+on:
+  workflow_call:
+    inputs:
+      build_docker_base:
+        description: "Build Docker Image for FlowOS Nightly Base"
+        required: true
+        type: boolean
+        default: false
+      build_docker_main:
+        description: "Build Docker Image for FlowOS Nightly"
+        required: true
+        type: boolean
+        default: false
+      build_docker_ep:
+        description: "Build Docker Image for FlowOS Nightly with Entrypoint"
+        required: false
+        type: boolean
+        default: false
+      build_flowos_core:
+        description: "Build and release FLOWOS_CORE package"
+        required: false
+        type: boolean
+        default: false
+      nightly_tag_release:
+        description: "Tag for the nightly main build"
+        required: true
+        type: string
+      nightly_tag_base:
+        description: "Tag for the nightly base build"
+        required: true
+        type: string
+      nightly_tag_flowos_core:
+        description: "Tag for the nightly FLOWOS_CORE build"
+        required: false
+        type: string
+      nightly_tag_sdk:
+        description: "Tag for the nightly SDK build"
+        required: false
+        type: string
+      push_to_registry:
+        description: "Whether to push images to registries. Set to false for testing builds without publishing."
+        required: true
+        type: boolean
+        default: false
+
+env:
+  POETRY_VERSION: "1.8.3"
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  build-nightly-flowos_core:
+    name: Build FLOWOS_CORE Nightly
+    if: ${{ inputs.build_flowos_core }}
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.verify.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the code at a specific ref
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.nightly_tag_release }}
+          persist-credentials: true
+      - name: "Setup Environment"
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          python-version: ${{ env.PYTHON_VERSION }}
+          prune-cache: false
+      - name: Install FLOWOS_CORE dependencies
+        run: cd src/flowos-core && uv sync
+
+      - name: Verify SDK Nightly Name and Version
+        if: ${{ inputs.build_flowos_core }}
+        run: |
+          name=$(grep '^name = "' src/sdk/pyproject.toml | head -n 1 | sed 's/.*"\(.*\)".*/\1/')
+          version=$(grep '^version = "' src/sdk/pyproject.toml | head -n 1 | sed 's/.*"\(.*\)".*/\1/')
+          if [ "$name" != "flowos-sdk" ]; then
+            echo "Name $name does not match flowos-sdk. Exiting the workflow."
+            exit 1
+          fi
+          if [ "v$version" != "${{ inputs.nightly_tag_sdk }}" ]; then
+            echo "Version v$version does not match nightly tag ${{ inputs.nightly_tag_sdk }}. Exiting the workflow."
+            exit 1
+          fi
+
+      - name: Verify Nightly Name and Version
+        id: verify
+        run: |
+          cd src/flowos-core
+          # Root the tree at flowos_core; a bare `grep flowos_core` matches bundles like `flowos-ibm` first.
+          name=$(uv tree --package flowos_core | head -n 1 | awk '{print $1}')
+          version=$(uv tree --package flowos_core | head -n 1 | awk '{print $2}')
+          if [ "$name" != "flowos_core" ]; then
+            echo "Name $name does not match flowos_core. Exiting the workflow."
+            exit 1
+          fi
+          if [ "$version" != "${{ inputs.nightly_tag_flowos_core }}" ]; then
+            echo "Version $version does not match nightly tag ${{ inputs.nightly_tag_flowos_core }}. Exiting the workflow."
+            exit 1
+          fi
+          # Strip the leading `v` from the version
+          version=$(echo $version | sed 's/^v//')
+          echo "version=$version" >> $GITHUB_OUTPUT
+
+      - name: Build flowos-sdk for distribution
+        run: |
+          make sdk_build args="--wheel"
+
+      - name: Build FLOWOS_CORE for distribution
+        run: |
+          cd src/flowos-core
+          rm -rf dist/
+          uv build --wheel --out-dir dist
+
+      - name: Test FLOWOS_CORE CLI
+        run: |
+          cd src/flowos-core
+          # Use a clean venv and install both wheels together so uv can resolve
+          # the local SDK dependency without falling back to PyPI.
+          uv venv test-env --seed
+          uv pip install --python ./test-env/bin/python --force-reinstall ../sdk/dist/*.whl dist/*.whl
+          ./test-env/bin/flowos_core --help
+          echo "FLOWOS_CORE CLI test completed successfully"
+
+      # PyPI publishing moved to after cross-platform testing
+
+      - name: Upload flowos-sdk Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: dist-nightly-sdk
+          path: src/sdk/dist
+
+      - name: Upload FLOWOS_CORE Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: dist-nightly-flowos_core
+          path: src/flowos-core/dist
+
+  build-nightly-base:
+    name: Build FlowOS Nightly Base
+    needs: [build-nightly-flowos_core]
+    if: ${{ always() && (needs.build-nightly-flowos_core.result == 'success' || inputs.build_flowos_core == false) }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      version: ${{ steps.verify.outputs.version }}
+      skipped: ${{ steps.verify.outputs.skipped }}
+    steps:
+      - name: Check out the code at a specific ref
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.nightly_tag_release }}
+          persist-credentials: true
+      - name: "Setup Environment"
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          python-version: ${{ env.PYTHON_VERSION }}
+          prune-cache: false
+
+      - name: Download FLOWOS_CORE artifact
+        if: inputs.build_flowos_core
+        uses: actions/download-artifact@v7
+        with:
+          name: dist-nightly-flowos_core
+          path: flowos_core-dist
+
+      - name: Install the project
+        run: uv sync
+
+      - name: Force reinstall FLOWOS_CORE from built wheel
+        if: inputs.build_flowos_core
+        run: |
+          echo "Installing FLOWOS_CORE from built wheel to test the actual distribution package..."
+          # While workspace resolution installs from source, we want to test the exact
+          # wheel that will be published to PyPI to catch any packaging issues
+          uv pip install --force-reinstall --no-deps flowos_core-dist/*.whl
+
+      - name: Verify Nightly Name and Version
+        id: verify
+        run: |
+          # Root the tree at flowos-base; it prints as a top-level `flowos-base v<ver>` line,
+          # so a bare `grep flowos-base` would read the version into $name and leave $version empty.
+          name=$(uv tree --package flowos-base | head -n 1 | awk '{print $1}')
+          version=$(uv tree --package flowos-base | head -n 1 | awk '{print $2}')
+          # Strip extras from package name (e.g., "flowos-base[complete]" -> "flowos-base")
+          name_without_extras=$(echo $name | sed 's/\[.*\]//')
+          if [ "$name_without_extras" != "flowos-base" ]; then
+            echo "Name $name_without_extras does not match flowos-base. Exiting the workflow."
+            echo "skipped=true" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          if [ "$version" != "${{ inputs.nightly_tag_base }}" ]; then
+            echo "Version $version does not match nightly tag ${{ inputs.nightly_tag_base }}. Exiting the workflow."
+            echo "skipped=true" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          # Strip the leading `v` from the version
+          version=$(echo $version | sed 's/^v//')
+          echo "version=$version" >> $GITHUB_OUTPUT
+          echo "skipped=false" >> $GITHUB_OUTPUT
+
+      - name: Build FlowOS Base for distribution
+        run: |
+          rm -rf src/backend/base/dist
+          rm -rf dist
+          make build base=true args="--no-sources --wheel"
+
+      - name: Test FlowOS Base CLI
+        run: |
+          # TODO: Unsure why the whl is not built in src/backend/base/dist
+          mkdir src/backend/base/dist
+          mv dist/*.whl src/backend/base/dist/
+          # Install with [complete] extra to test all optional dependencies
+          WHEEL_FILE=$(ls src/backend/base/dist/*.whl)
+          uv pip install "${WHEEL_FILE}[complete]"
+          uv run python -m flowos run --host localhost --port 7860 --backend-only &
+          SERVER_PID=$!
+          # Wait for the server to start
+          timeout 120 bash -c 'until curl -f http://localhost:7860/api/v1/auto_login; do sleep 2; done' || (echo "Server did not start in time" && kill $SERVER_PID && exit 1)
+          # Terminate the server
+          kill $SERVER_PID || (echo "Failed to terminate the server" && exit 1)
+          sleep 20 # give the server some time to terminate
+          # Check if the server is still running
+          if kill -0 $SERVER_PID 2>/dev/null; then
+            echo "Failed to terminate the server"
+            exit 0
+          else
+            echo "Server terminated successfully"
+          fi
+
+      # PyPI publishing moved to after cross-platform testing
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: dist-nightly-base
+          path: src/backend/base/dist
+
+  build-nightly-main:
+    name: Build FlowOS Nightly Main
+    needs: [build-nightly-base]
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.verify.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the code at a specific ref
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.nightly_tag_release}}
+          persist-credentials: true
+      - name: "Setup Environment"
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          python-version: ${{ env.PYTHON_VERSION }}
+          prune-cache: false
+
+      - name: Download FLOWOS_CORE artifact
+        if: inputs.build_flowos_core
+        uses: actions/download-artifact@v7
+        with:
+          name: dist-nightly-flowos_core
+          path: flowos_core-dist
+
+      - name: Download base artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: dist-nightly-base
+          path: base-dist
+
+      - name: Install the project
+        run: uv sync
+
+      - name: Force reinstall packages from built wheels
+        run: |
+          # While workspace resolution installs from source, we want to test the exact
+          # wheels that will be published to PyPI to catch any packaging issues
+          if [ "${{ inputs.build_flowos_core }}" == "true" ]; then
+            echo "Installing FLOWOS_CORE from built wheel..."
+            uv pip install --force-reinstall --no-deps flowos_core-dist/*.whl
+          fi
+          echo "Installing flowos-base from built wheel..."
+          uv pip install --force-reinstall --no-deps base-dist/*.whl
+
+      - name: Verify Nightly Name and Version
+        id: verify
+        run: |
+          name=$(uv tree | grep -E '^flowos[[:space:]]' | awk '{print $1}')
+          version=$(uv tree | grep -E '^flowos[[:space:]]' | awk '{print $2}')
+          if [ "$name" != "flowos" ]; then
+            echo "Name $name does not match flowos. Exiting the workflow."
+            exit 1
+          fi
+          if [ "$version" != "${{ inputs.nightly_tag_release }}" ]; then
+            echo "Version $version does not match nightly tag ${{ inputs.nightly_tag_release }}. Exiting the workflow."
+            exit 1
+          fi
+          # Strip the leading `v` from the version
+          version=$(echo $version | sed 's/^v//')
+          echo "version=$version" >> $GITHUB_OUTPUT
+      - name: Wait for PyPI Propagation
+        if: needs.build-nightly-base.outputs.skipped == 'false'
+        run: sleep 300 # wait for 5 minutes to ensure PyPI propagation of base
+
+      - name: Build FlowOS Main for distribution
+        run: make build main=true args="--no-sources --wheel"
+      - name: Test FlowOS Main CLI
+        run: |
+          uv pip install dist/*.whl
+          uv run python -m flowos run --host localhost --port 7860 --backend-only &
+          SERVER_PID=$!
+          # Wait for the server to start
+          timeout 120 bash -c 'until curl -f http://localhost:7860/health_check; do sleep 2; done' || (echo "Server did not start in time" && kill $SERVER_PID && exit 1)
+          # Terminate the server
+          kill $SERVER_PID || (echo "Failed to terminate the server" && exit 1)
+          sleep 20 # give the server some time to terminate
+          # Check if the server is still running
+          if kill -0 $SERVER_PID 2>/dev/null; then
+            echo "Failed to terminate the server"
+            exit 0
+          else
+            echo "Server terminated successfully"
+          fi
+
+      - name: Prepare FlowOS Main artifact
+        run: |
+          shopt -s nullglob
+          MAIN_WHEELS=(dist/flowos-*.whl)
+          if [ ${#MAIN_WHEELS[@]} -ne 1 ]; then
+            echo "Expected exactly one flowos wheel in dist/, found ${#MAIN_WHEELS[@]}"
+            ls -la dist/
+            exit 1
+          fi
+          rm -rf main-dist
+          mkdir -p main-dist
+          cp "${MAIN_WHEELS[0]}" main-dist/
+
+      # Bundles are NOT rebuilt/republished for nightly. The stable `flowos_core-*` bundles on
+      # PyPI work as-is against the canonical `flowos_core` pre-release (see src/bundles/NIGHTLY.md). The
+      # cross-platform test self-builds the bundles from src/bundles for install coverage.
+
+      # PyPI publishing moved to after cross-platform testing
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: dist-nightly-main
+          path: main-dist
+
+  test-cross-platform:
+    name: Test Cross-Platform Installation
+    needs: [build-nightly-flowos_core, build-nightly-base, build-nightly-main]
+    uses: ./.github/workflows/cross-platform-test.yml
+    with:
+      base-artifact-name: "dist-nightly-base"
+      main-artifact-name: "dist-nightly-main"
+      flowos_core-artifact-name: "dist-nightly-flowos_core"
+      sdk-artifact-name: "dist-nightly-sdk"
+
+  publish-nightly-flowos_core:
+    name: Publish FLOWOS_CORE Nightly to PyPI
+    needs: [build-nightly-flowos_core, test-cross-platform, publish-nightly-sdk]
+    if: ${{ inputs.build_flowos_core }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.nightly_tag_release }}
+          persist-credentials: true
+      - name: Download FLOWOS_CORE artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: dist-nightly-flowos_core
+          path: src/flowos-core/dist
+      - name: Setup Environment
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+          python-version: "3.13"
+      - name: Publish FLOWOS_CORE to PyPI
+        env:
+          POETRY_PYPI_TOKEN_PYPI: ${{ secrets.PYPI_API_TOKEN }}
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          make flowos_core_publish
+
+  publish-nightly-sdk:
+    name: Publish SDK Nightly to PyPI
+    needs: [build-nightly-flowos_core, test-cross-platform]
+    if: ${{ inputs.build_flowos_core }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.nightly_tag_release }}
+          persist-credentials: true
+      - name: Download flowos-sdk artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: dist-nightly-sdk
+          path: src/sdk/dist
+      - name: Setup Environment
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+          python-version: "3.13"
+      - name: Publish SDK to PyPI
+        env:
+          POETRY_PYPI_TOKEN_PYPI: ${{ secrets.PYPI_API_TOKEN }}
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          make sdk_publish
+
+  publish-nightly-base:
+    name: Publish FlowOS Base Nightly to PyPI
+    needs: [build-nightly-base, test-cross-platform, publish-nightly-flowos_core]
+    if: ${{ always() && needs.build-nightly-base.result == 'success' && needs.test-cross-platform.result == 'success' && (needs.publish-nightly-flowos_core.result == 'success' || inputs.build_flowos_core == false) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.nightly_tag_release }}
+          persist-credentials: true
+      - name: Download base artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: dist-nightly-base
+          path: src/backend/base/dist
+      - name: Setup Environment
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+          python-version: "3.13"
+      - name: Publish base to PyPI
+        if: needs.build-nightly-base.outputs.skipped == 'false'
+        env:
+          POETRY_PYPI_TOKEN_PYPI: ${{ secrets.PYPI_API_TOKEN }}
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          make publish base=true
+
+  publish-nightly-main:
+    name: Publish FlowOS Main Nightly to PyPI
+    needs: [build-nightly-main, test-cross-platform, publish-nightly-base]
+    if: ${{ always() && needs.build-nightly-main.result == 'success' && needs.test-cross-platform.result == 'success' && needs.publish-nightly-base.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.nightly_tag_release }}
+          persist-credentials: true
+      - name: Download main artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: dist-nightly-main
+          path: dist
+      - name: Setup Environment
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+          python-version: "3.13"
+      - name: Publish to PyPI
+        env:
+          POETRY_PYPI_TOKEN_PYPI: ${{ secrets.PYPI_API_TOKEN }}
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          make publish main=true
+
+  call_docker_build_base:
+    name: Call Docker Build Workflow for FlowOS Base
+    if: ${{ always() && inputs.build_docker_base }}
+    needs: [build-nightly-base, build-nightly-main]
+    uses: ./.github/workflows/docker-nightly-build.yml
+    with:
+      ref: ${{ inputs.nightly_tag_release }}
+      release_type: nightly-base
+      push_to_registry: ${{ inputs.push_to_registry }}
+    secrets: inherit
+
+  call_docker_build_main:
+    name: Call Docker Build Workflow for FlowOS
+    if: ${{ always() && inputs.build_docker_main }}
+    needs: [build-nightly-main, call_docker_build_base]
+    uses: ./.github/workflows/docker-nightly-build.yml
+    with:
+      ref: ${{ inputs.nightly_tag_release }}
+      release_type: nightly-main
+      push_to_registry: ${{ inputs.push_to_registry }}
+    secrets: inherit
+
+  # TODO: Uncomment this when our runner can fit the builds that contain pytorch (and other large dependencies)
+  # call_docker_build_main_all:
+  #   name: Call Docker Build Workflow for flowos-all
+  #   if: always() && ${{ inputs.build_docker_main == 'true' }}
+  #   needs: [build-nightly-main]
+  #   uses: ./.github/workflows/docker-nightly-build.yml
+  #   with:
+  #     ref: ${{ inputs.nightly_tag_release }}
+  #     release_type: nightly-main-all
+  #     main_version: ${{ inputs.nightly_tag_release }}
+  #   secrets: inherit
+
+  # call_docker_build_main_ep:
+  #   name: Call Docker Build Workflow for FlowOS with Entrypoint
+  #   if: ${{ always() && inputs.build_docker_ep }}
+  #   needs: [build-nightly-main, call_docker_build_main]
+  #   uses: ./.github/workflows/docker-build-v2.yml
+  #   with:
+  #     ref: ${{ inputs.nightly_tag_release }}
+  #     release_type: main-ep
+  #     push_to_registry: ${{ inputs.push_to_registry }}
+  #   secrets: inherit

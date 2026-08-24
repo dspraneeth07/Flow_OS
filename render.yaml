@@ -1,0 +1,24 @@
+services:
+  # A Docker web service
+  - type: web
+    name: flowos
+    runtime: docker
+    dockerfilePath: ./docker/render.Dockerfile
+    repo: https://github.com/flowos-ai/flowos
+    branch: main
+    plan: standard
+    healthCheckPath: /health_check
+    autoDeploy: false
+    envVars:
+      - key: FLOWOS_DATABASE_URL
+        value: sqlite:////app/data/.cache/flowos/flowos.db
+      - key: FLOWOS_HOST
+        value: 0.0.0.0
+      - key: FLOWOS_PORT
+        # default render port https://docs.render.com/web-services#port-binding
+        value: 10000
+      - key: FLOWOS_LOG_LEVEL
+        value: INFO
+    disk:
+      name: flowos-data
+      mountPath: /app/data

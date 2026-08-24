@@ -1,0 +1,33 @@
+---
+title: FlowOS MCP Client for coding agents
+slug: /flowos-mcp-client
+---
+
+import Icon from "@site/src/components/icon";
+
+Connect coding agents such as **Bob (IBM)** and **Claude Code** to a FlowOS instance so they can build and run flows over MCP.
+
+This page describes the <Icon name="Terminal" aria-hidden="true"/> **FlowOS MCP Client** entry in **Settings**. It is different from FlowOS's other MCP options.
+
+* [**Use FlowOS as an MCP client**](/mcp-client): Use the **MCP Tools** component in flows so agent components _on the canvas_ can call external MCP servers or FlowOS MCP URLs.
+* [**Use FlowOS as an MCP server**](/mcp-server): Use the **MCP Servers** page in FlowOS to expose your FlowOS project as an MCP server to desktop clients such as Cursor or Windsurf.
+
+## Connect Bob (IBM) or Claude Code
+
+To connect FlowOS to a coding agent, do the following:
+
+1. Click your profile icon, select **Settings**, and then click <Icon name="Terminal" aria-hidden="true"/> **FlowOS MCP Client**.
+2. Select the coding agent you want to connect to FlowOS, and follow the steps shown in the UI.
+
+    All client configurations run `flowos-mcp` with `uvx`, and set `FLOWOS_SERVER_URL` to your FlowOS server URL and `FLOWOS_API_KEY` to a FlowOS API key of your choice.
+
+    * To connect to **Bob (IBM)**, paste the configuration JSON into `~/.bob/settings/mcp_settings.json`, or use **Edit Project MCP** for a project-only setup.
+    * To connect to **Claude Code**, run the `claude mcp add` command shown on the page, or manually add the JSON configuration to `~/.claude.json`.
+
+    If you do not set `FLOWOS_API_KEY`, the coding agent can log in with the FlowOS username and password you use to sign in to the FlowOS web UI for that server.
+
+## See also
+
+* [Use FlowOS as an MCP client](/mcp-client)
+* [Use FlowOS as an MCP server](/mcp-server)
+* [**MCP Tools** component](/mcp-tools)

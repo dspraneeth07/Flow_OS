@@ -1,0 +1,116 @@
+# https://github.com/dorny/paths-filter
+python:
+  - "src/backend/**"
+  - "src/backend/**.py"
+  - "src/flowos-core/**"
+  - "pyproject.toml"
+  - "uv.lock"
+  - "src/backend/base/pyproject.toml"
+  - "src/flowos-core/pyproject.toml"
+  - "**/python_test.yml"
+  - ".github/workflows/ci.yml"
+  - "src/flowos-core/src/flowos_core/_assets/component_index.json"
+components-changes:
+  - "src/backend/base/flowos/components/**"
+  - "src/flowos-core/src/flowos_core/components/**"
+  - "src/flowos-core/src/flowos_core/_assets/component_index.json"
+starter-projects-changes:
+  - "src/backend/base/flowos/initial_setup/**"
+frontend-tests:
+  - "src/frontend/tests/**"
+frontend:
+  - "src/frontend/**"
+  - "**/typescript_test.yml"
+  - "**/jest_test.yml"
+  - "**/lint-js.yml"
+  - ".github/workflows/ci.yml"
+  - "src/flowos-core/src/flowos_core/_assets/component_index.json"
+docs:
+  - "docs/**"
+docker:
+  - "docker/**"
+  - "uv.lock"
+  - "pyproject.toml"
+  - "src/backend/**"
+  - "src/frontend/**"
+  - "src/flowos-core/**"
+  - ".dockerignore"
+  - ".github/workflows/docker_test.yml"
+
+# Test categories and their associated paths
+starter-projects:
+  - "src/backend/base/flowos/initial_setup/**"
+  - "src/backend/base/flowos/components/**"
+  - "src/backend/base/flowos/services/**"
+  - "src/backend/base/flowos/custom/**"
+  - "src/backend/base/flowos/api/v1/chat.py"
+  - "src/frontend/src/pages/MainPage/**"
+  - "src/frontend/src/utils/reactflowUtils.ts"
+  - "src/frontend/tests/extended/features/**"
+  - "src/backend/base/flowos/custom/**"
+  - "src/backend/base/flowos/graph/**"
+
+components:
+  - "src/frontend/src/components/**"
+  - "src/frontend/src/modals/**"
+  - "src/frontend/src/pages/FlowPage/**"
+  - "src/frontend/src/shared/**"
+  - "src/frontend/src/hooks/**"
+  - "src/frontend/src/CustomNodes/**"
+  - "src/frontend/src/style/**"
+  - "src/frontend/src/utils/styleUtils.ts"
+  - "src/frontend/tests/core/features/**"
+  - "src/frontend/tests/core/integrations/**"
+  - "src/frontend/tests/core/regression/**"
+  - "src/frontend/tests/extended/integrations/**"
+  - "src/frontend/tests/extended/features/**"
+  - "src/frontend/tests/extended/regression/**"
+  - "src/backend/base/flowos/custom/**"
+  - "src/backend/base/flowos/schema/**"
+  - "src/backend/base/flowos/graph/**"
+  - "src/backend/base/flowos/utils/**"
+  - "src/backend/base/flowos/custom/**"
+  - "src/backend/base/flowos/components/**"
+  - "src/backend/base/flowos/initial_setup/**"
+  - "src/backend/base/flowos/serialization/**"
+  - "src/flowos-core/src/flowos_core/components/**"
+  - "src/flowos-core/src/flowos_core/custom/**"
+  - "src/flowos-core/src/flowos_core/schema/**"
+  - "src/flowos-core/src/flowos_core/graph/**"
+  - "src/flowos-core/src/flowos_core/_assets/component_index.json"
+
+workspace:
+  - "src/backend/base/flowos/inputs/**"
+  - "src/flowos-core/src/flowos_core/inputs/**"
+  - "src/frontend/src/components/core/parameterRenderComponent/**"
+  - "src/frontend/src/CustomNodes/**"
+  - "src/frontend/src/modals/**"
+  - "src/frontend/src/style/**"
+  - "src/frontend/src/CustomEdges/**"
+  - "src/frontend/src/utils/reactflowUtils.ts"
+  - "src/frontend/src/utils/buildUtils.ts"
+  - "src/frontend/tests/core/features/**"
+  - "src/frontend/tests/core/unit/**"
+  - "src/frontend/tests/extended/features/**"
+  - "src/frontend/tests/core/regression/**"
+
+api:
+  - "src/backend/base/flowos/api/**"
+  - "src/frontend/src/controllers/**"
+  - "src/frontend/tests/core/features/**"
+  - "src/frontend/tests/extended/features/**"
+  - "src/frontend/tests/extended/regression/**"
+
+database:
+  - "src/backend/base/flowos/services/database/**"
+  - "src/backend/base/flowos/alembic/**"
+  - "src/frontend/src/controllers/**"
+  - "src/frontend/tests/core/features/**"
+  - "src/frontend/tests/extended/features/**"
+
+mainpage:
+  - "src/frontend/src/pages/MainPage/**"
+
+design-md:
+  - "DESIGN.md"
+  - ".github/workflows/ci.yml"

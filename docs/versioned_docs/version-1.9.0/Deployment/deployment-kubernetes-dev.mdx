@@ -1,0 +1,188 @@
+---
+title: Deploy the FlowOS development environment on Kubernetes
+slug: /deployment-kubernetes-dev
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+The [FlowOS integrated development environment (IDE) Helm chart](https://github.com/flowos-ai/flowos-helm-charts/tree/main/charts/flowos-ide) is designed to provide a complete environment for developers to create, test, and debug their flows. It includes both the FlowOS API and visual editor.
+
+## Prerequisites
+
+- A [Kubernetes](https://kubernetes.io/docs/setup/) cluster
+- [kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl)
+- [Helm](https://helm.sh/docs/intro/install/)
+
+## Prepare a Kubernetes cluster
+
+This example uses [Minikube](https://minikube.sigs.k8s.io/docs/start/), but you can use any Kubernetes cluster.
+
+1. Create a Kubernetes cluster on Minikube:
+
+	```shell
+	minikube start
+	```
+
+2. Set `kubectl` to use Minikube:
+
+	```shell
+	kubectl config use-context minikube
+	```
+
+## Install the FlowOS IDE Helm chart
+
+1. Add the repository to Helm, and then update it:
+
+	```shell
+	helm repo add flowos https://flowos-ai.github.io/flowos-helm-charts
+	helm repo update
+	```
+
+2. Install FlowOS with the default options in the `flowos` namespace:
+
+	```shell
+	helm install flowos-ide flowos/flowos-ide -n flowos --create-namespace
+	```
+
+3. Check the status of the pods:
+
+	```shell
+	kubectl get pods -n flowos
+	```
+
+## Access the FlowOS IDE
+
+Enable local port forwarding to access FlowOS from your local machine:
+
+1. Make the FlowOS API accessible from your local machine at port 7860:
+
+    ```shell
+    kubectl port-forward -n flowos svc/flowos-service-backend 7860:7860
+    ```
+
+2. Make the visual editor accessible from your local machine at port 8080:
+
+    ```shell
+    kubectl port-forward -n flowos svc/flowos-service 8080:8080
+    ```
+
+Now you can do the following:
+
+- Access the FlowOS API at `http://localhost:7860`.
+- Access the visual editor at `http://localhost:8080`.
+
+## Modify your FlowOS IDE deployment
+
+You can modify the FlowOS IDE Helm chart's [`values.yaml`](https://github.com/flowos-ai/flowos-helm-charts/blob/main/charts/flowos-ide/values.yaml) file to customize your deployment.
+The following sections describe some common modifications.
+
+If you need to set secrets, Kubernetes secrets are recommended.
+
+### Deploy a different FlowOS version
+
+The FlowOS IDE Helm chart deploys the latest FlowOS version by default.
+
+To specify a different FlowOS version, set the `flowos.backend.image.tag` and `flowos.frontend.image.tag` values to your preferred version.
+For example:
+
+```yaml
+flowos:
+  backend:
+    image:
+      tag: "1.0.0a59"
+  frontend:
+    image:
+      tag: "1.0.0a59"
+```
+
+### Use external storage for the FlowOS database
+
+The FlowOS IDE Helm chart uses the default FlowOS database configuration, specifically a SQLite database stored in a local persistent disk.
+
+If you want to use an [external PostgreSQL database](/configuration-custom-database), use `postgresql` chart or `externalDatabase` to configure the database connection in `values.yaml`.
+
+<Tabs>
+<TabItem value="postgresql" label="postgresql" default>
+
+Use the built-in PostgreSQL chart:
+
+```yaml
+postgresql:
+  enabled: true
+  auth:
+    username: "flowos"
+    password: "flowos-postgres"
+    database: "flowos-db"
+```
+
+</TabItem>
+<TabItem value="externaldatabase" label="externalDatabase">
+
+If you don't want to use the built-in PostgreSQL chart, set `postgresql.enabled` to `false`, and then configure the database connection in `flowos.backend.externalDatabase`:
+
+```yaml
+postgresql:
+  enabled: false
+
+flowos:
+  backend:
+    externalDatabase:
+      enabled: true
+      driver:
+        value: "postgresql"
+      host:
+        value: "postgresql-svc.flowos.svc.cluster.local"
+      port:
+        value: "5432"
+      user:
+        value: "flowos"
+      password:
+        valueFrom:
+          secretKeyRef:
+            key: "password"
+            name: "your-secret-name"
+      database:
+        value: "flowos-db"
+    sqlite:
+      enabled: false
+```
+
+</TabItem>
+</Tabs>
+
+### Configure scaling
+
+To configure scaling for the FlowOS IDE Helm chart deployment, you must set `replicaCount` (horizontal scaling) and `resources` (vertical scaling) for both the `flowos.backend` and `flowos.frontend`.
+
+If your flows rely on a shared state, such as [built-in chat memory](/memory), you must also set up a shared database when scaling horizontally.
+
+```yaml
+flowos:
+  backend:
+    replicaCount: 1
+    resources:
+      requests:
+        cpu: 0.5
+        memory: 1Gi
+      # limits:
+      #   cpu: 0.5
+      #   memory: 1Gi
+
+  frontend:
+    enabled: true
+    replicaCount: 1
+    resources:
+      requests:
+        cpu: 0.3
+        memory: 512Mi
+      # limits:
+      #   cpu: 0.3
+      #   memory: 512Mi
+```
+
+## See also
+
+* [Best practices for FlowOS on Kubernetes](/deployment-prod-best-practices)
+* [Deploy the FlowOS production environment on Kubernetes](/deployment-kubernetes-prod)
+* [FlowOS Helm Charts repository](https://github.com/flowos-ai/flowos-helm-charts)

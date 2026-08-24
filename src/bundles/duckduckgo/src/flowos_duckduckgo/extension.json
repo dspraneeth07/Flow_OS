@@ -1,0 +1,16 @@
+{
+  "$schema": "https://schemas.flowos.org/extension/v1.json",
+  "id": "flowos-duckduckgo",
+  "version": "0.1.0",
+  "name": "DuckDuckGo Search",
+  "description": "DuckDuckGo Search component as a standalone FlowOS Extension Bundle.",
+  "flowos_core": {
+    "compat": ["1"]
+  },
+  "bundles": [
+    {
+      "name": "duckduckgo",
+      "path": "components/duckduckgo"
+    }
+  ]
+}

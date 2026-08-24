@@ -1,0 +1,903 @@
+name: Cross-Platform Installation Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      flowos-version:
+        description: "FlowOS version to test from PyPI (leave empty to test from source)"
+        required: false
+        type: string
+        default: ""
+  workflow_call:
+    inputs:
+      base-artifact-name:
+        description: "Name of the base package artifact"
+        required: true
+        type: string
+      main-artifact-name:
+        description: "Name of the main package artifact"
+        required: true
+        type: string
+      flowos_core-artifact-name:
+        description: "Name of the FLOWOS_CORE package artifact"
+        required: false
+        type: string
+      sdk-artifact-name:
+        description: "Name of the flowos-sdk package artifact"
+        required: false
+        type: string
+      bundles-artifact-name:
+        description: "Name of the bundles package artifact (contains every src/bundles/*/ wheel)"
+        required: false
+        type: string
+      pre_release:
+        description: "Whether this is a pre-release build"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  build-if-needed:
+    name: Build Packages (if no artifacts provided)
+    runs-on: ubuntu-latest
+    if: inputs.flowos-version == '' && contains(github.workflow_ref, 'cross-platform-test.yml')
+    outputs:
+      base-artifact-name: ${{ steps.set-names.outputs.base-artifact-name }}
+      main-artifact-name: ${{ steps.set-names.outputs.main-artifact-name }}
+      flowos_core-artifact-name: ${{ steps.set-names.outputs.flowos_core-artifact-name }}
+      sdk-artifact-name: ${{ steps.set-names.outputs.sdk-artifact-name }}
+      bundles-artifact-name: ${{ steps.set-names.outputs.bundles-artifact-name }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+      - name: Setup Environment
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          python-version: "3.13"
+      - name: Install the project
+        run: uv sync
+      - name: Install frontend dependencies
+        run: make install_frontendci
+      - name: Build frontend
+        run: make build_frontend
+      - name: Build base package
+        run: make build_flowos_base args="--wheel"
+      - name: Move base package to correct directory
+        run: |
+          # Base package builds to dist/ but should be in src/backend/base/dist/
+          mkdir -p src/backend/base/dist
+          mv dist/flowos_base*.whl src/backend/base/dist/
+      - name: Build FLOWOS_CORE package
+        run: |
+          cd src/flowos-core
+          uv build --wheel --out-dir dist
+      - name: Build SDK package
+        run: |
+          cd src/sdk
+          uv build --wheel --out-dir dist
+      - name: Build main package
+        run: make build_flowos args="--wheel"
+      - name: Build bundle wheels
+        id: build-bundles
+        run: |
+          shopt -s nullglob
+          bundles=(src/bundles/*/pyproject.toml)
+          if [ ${#bundles[@]} -eq 0 ]; then
+            echo "No bundles found under src/bundles/*/"
+            echo "bundles-found=0" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          mkdir -p bundles-dist
+          BUNDLES_DIST="$PWD/bundles-dist"
+          for bundle_pyproject in "${bundles[@]}"; do
+            bundle_dir=$(dirname "$bundle_pyproject")
+            echo "Building wheel for $bundle_dir"
+            (cd "$bundle_dir" && uv build --wheel --out-dir "$BUNDLES_DIST")
+          done
+          echo "bundles-found=1" >> $GITHUB_OUTPUT
+          ls -la bundles-dist/
+      - name: Upload flowos_core artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: adhoc-dist-flowos_core
+          path: src/flowos-core/dist
+      - name: Upload SDK artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: adhoc-dist-sdk
+          path: src/sdk/dist
+      - name: Upload base artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: adhoc-dist-base
+          path: src/backend/base/dist
+      - name: Upload main artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: adhoc-dist-main
+          path: dist
+      - name: Upload bundles artifact
+        if: steps.build-bundles.outputs.bundles-found == '1'
+        uses: actions/upload-artifact@v6
+        with:
+          name: adhoc-dist-bundles
+          path: bundles-dist
+      - name: Set artifact names
+        id: set-names
+        run: |
+          echo "base-artifact-name=adhoc-dist-base" >> $GITHUB_OUTPUT
+          echo "main-artifact-name=adhoc-dist-main" >> $GITHUB_OUTPUT
+          echo "flowos_core-artifact-name=adhoc-dist-flowos_core" >> $GITHUB_OUTPUT
+          echo "sdk-artifact-name=adhoc-dist-sdk" >> $GITHUB_OUTPUT
+          if [ "${{ steps.build-bundles.outputs.bundles-found }}" = "1" ]; then
+            echo "bundles-artifact-name=adhoc-dist-bundles" >> $GITHUB_OUTPUT
+          else
+            echo "bundles-artifact-name=" >> $GITHUB_OUTPUT
+          fi
+
+  test-installation-stable:
+    name: Install & Run - ${{ matrix.os }} ${{ matrix.arch }} ${{ matrix.python-version }}
+    needs: [build-if-needed]
+    if: always() && (needs.build-if-needed.result == 'success' || needs.build-if-needed.result == 'skipped')
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux AMD64
+          - os: linux
+            arch: amd64
+            runner: ubuntu-latest
+            python-version: "3.10"
+          - os: linux
+            arch: amd64
+            runner: ubuntu-latest
+            python-version: "3.12"
+          # macOS AMD64 (Intel) - Python 3.12 only for cost optimization
+          - os: macos
+            arch: amd64
+            runner: macos-latest-large
+            python-version: "3.12"
+          # macOS ARM64 (Apple Silicon)
+          - os: macos
+            arch: arm64
+            runner: macos-latest
+            python-version: "3.10"
+          - os: macos
+            arch: arm64
+            runner: macos-latest
+            python-version: "3.12"
+          # Windows AMD64
+          - os: windows
+            arch: amd64
+            runner: windows-latest
+            python-version: "3.10"
+          - os: windows
+            arch: amd64
+            runner: windows-latest
+            python-version: "3.12"
+          # Python 3.13 - graduated from experimental to stable (blocking).
+          # macOS Intel (amd64) is intentionally omitted here: like 3.10/3.12 above
+          # it stays on the costly macos-latest-large runner only at 3.12. Intel
+          # coverage for newer Python continues (non-blocking) in the experimental
+          # 3.14 set below.
+          - os: linux
+            arch: amd64
+            runner: ubuntu-latest
+            python-version: "3.13"
+          - os: macos
+            arch: arm64
+            runner: macos-latest
+            python-version: "3.13"
+          - os: windows
+            arch: amd64
+            runner: windows-latest
+            python-version: "3.13"
+
+    steps:
+      - name: Determine install method
+        id: install-method
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ -n "${{ inputs.flowos-version }}" ]; then
+              echo "method=pypi" >> $GITHUB_OUTPUT
+            else
+              echo "method=wheel" >> $GITHUB_OUTPUT
+            fi
+          else
+            # workflow_call always uses wheel method (backward compatibility)
+            echo "method=wheel" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: ${{ matrix.arch == 'amd64' && 'x64' || matrix.arch }}
+
+      - name: Setup UV
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+          ignore-empty-workdir: true
+
+      - name: Install Protocol Buffers (macOS AMD64)
+        if: matrix.os == 'macos' && matrix.arch == 'amd64'
+        run: |
+          if ! command -v protoc &> /dev/null; then
+            brew install protobuf
+          else
+            echo "protoc already installed, skipping"
+          fi
+        shell: bash
+
+      # Download artifacts for wheel installation
+      - name: Download flowos-sdk package artifact
+        if: steps.install-method.outputs.method == 'wheel' && (inputs.sdk-artifact-name != '' || needs.build-if-needed.outputs.sdk-artifact-name != '')
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ inputs.sdk-artifact-name || needs.build-if-needed.outputs.sdk-artifact-name || 'adhoc-dist-sdk' }}
+          path: ./sdk-dist
+
+      - name: Download FLOWOS_CORE package artifact
+        if: steps.install-method.outputs.method == 'wheel' && (inputs.flowos_core-artifact-name != '' || needs.build-if-needed.outputs.flowos_core-artifact-name != '')
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ inputs.flowos_core-artifact-name || needs.build-if-needed.outputs.flowos_core-artifact-name || 'adhoc-dist-flowos_core' }}
+          path: ./flowos_core-dist
+
+      - name: Download base package artifact
+        if: steps.install-method.outputs.method == 'wheel'
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ inputs.base-artifact-name || needs.build-if-needed.outputs.base-artifact-name || 'adhoc-dist-base' }}
+          path: ./base-dist
+
+      - name: Download main package artifact
+        if: steps.install-method.outputs.method == 'wheel'
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ inputs.main-artifact-name || needs.build-if-needed.outputs.main-artifact-name || 'adhoc-dist-main' }}
+          path: ./main-dist
+
+      - name: Download bundles package artifact
+        if: steps.install-method.outputs.method == 'wheel' && (inputs.bundles-artifact-name != '' || needs.build-if-needed.outputs.bundles-artifact-name != '')
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ inputs.bundles-artifact-name || needs.build-if-needed.outputs.bundles-artifact-name }}
+          path: ./bundles-dist
+
+      - name: Create fresh virtual environment
+        run: |
+          uv venv test-env --seed
+        shell: bash
+
+      - name: Install packages from wheel
+        if: steps.install-method.outputs.method == 'wheel'
+        run: |
+          set -eo pipefail
+          shopt -s nullglob
+
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            PYTHON=./test-env/Scripts/python.exe
+          else
+            PYTHON=./test-env/bin/python
+          fi
+
+          refresh_find_links() {
+            FIND_LINKS=()
+            for wheel_dir in ./sdk-dist ./flowos_core-dist ./base-dist ./bundles-dist; do
+              if [ -d "$wheel_dir" ]; then
+                FIND_LINKS+=(--find-links "$wheel_dir")
+              fi
+            done
+          }
+
+          install_wheels() {
+            label="$1"
+            shift
+            if [ "$#" -eq 0 ]; then
+              echo "No $label wheel found"
+              exit 1
+            fi
+            printf 'Installing %s wheel(s):\n' "$label"
+            printf '%s\n' "$@"
+            refresh_find_links
+            # Use `if-necessary-or-explicit` (not `allow`): nightly flowos* wheels
+            # are .dev pre-releases so we need to allow them explicitly, but `allow`
+            # leaks to transitive deps and resolves pre-release pydantic alphas
+            # (e.g. 2.14.0a1) which break langchain-core's module-level
+            # `RunnablePassthrough()` call at import time.
+            uv pip install --prerelease=if-necessary-or-explicit --python "$PYTHON" "${FIND_LINKS[@]}" "$@"
+          }
+
+          SDK_WHEELS=(./sdk-dist/*.whl)
+          FLOWOS_WHEELS=(./flowos_core-dist/*.whl)
+          if [ ${#SDK_WHEELS[@]} -gt 0 ] || [ ${#FLOWOS_WHEELS[@]} -gt 0 ]; then
+            install_wheels "SDK/FLOWOS_CORE" "${SDK_WHEELS[@]}" "${FLOWOS_WHEELS[@]}"
+          fi
+
+          BASE_WHEELS=(./base-dist/*.whl)
+          install_wheels "base" "${BASE_WHEELS[@]}"
+
+          if [ -d ./bundles-dist ]; then
+            BUNDLE_WHEELS=(./bundles-dist/*.whl)
+            install_wheels "bundle" "${BUNDLE_WHEELS[@]}"
+          fi
+
+          MAIN_WHEELS=()
+          while IFS= read -r wheel; do
+            MAIN_WHEELS+=("$wheel")
+          done < <(find ./main-dist -name "flowos*.whl" ! -name "flowos_base*.whl" -type f | sort)
+          if [ ${#MAIN_WHEELS[@]} -ne 1 ]; then
+            echo "Expected exactly one flowos wheel in ./main-dist, found ${#MAIN_WHEELS[@]}"
+            find ./main-dist -name "*.whl" -type f | sort
+            exit 1
+          fi
+          install_wheels "main" "${MAIN_WHEELS[@]}"
+        shell: bash
+
+      # PyPI installation steps
+      - name: Install flowos from PyPI (Windows)
+        if: steps.install-method.outputs.method == 'pypi' && matrix.os == 'windows'
+        run: |
+          if [ -n "${{ inputs.flowos-version }}" ]; then
+            uv pip install --python ./test-env/Scripts/python.exe flowos==${{ inputs.flowos-version }}
+          else
+            uv pip install --python ./test-env/Scripts/python.exe flowos
+          fi
+        shell: bash
+
+      - name: Install flowos from PyPI (Unix)
+        if: steps.install-method.outputs.method == 'pypi' && matrix.os != 'windows'
+        run: |
+          if [ -n "${{ inputs.flowos-version }}" ]; then
+            uv pip install --python ./test-env/bin/python flowos==${{ inputs.flowos-version }}
+          else
+            uv pip install --python ./test-env/bin/python flowos
+          fi
+        shell: bash
+
+      # Install additional dependencies
+      - name: Install additional dependencies (Windows)
+        if: matrix.os == 'windows'
+        run: |
+          uv pip install --python ./test-env/Scripts/python.exe openai
+        shell: bash
+
+      - name: Install additional dependencies (Unix)
+        if: matrix.os != 'windows'
+        run: |
+          uv pip install --python ./test-env/bin/python openai
+        shell: bash
+
+      # Test steps
+      - name: Test CLI help command
+        if: matrix.os == 'windows'
+        run: |
+          uv run --python ./test-env/Scripts/python.exe python -m flowos --help
+        shell: cmd
+
+      - name: Test CLI help command (Unix)
+        if: matrix.os != 'windows'
+        run: |
+          uv run --python ./test-env/bin/python python -m flowos --help
+        shell: bash
+
+      - name: Test server startup (Windows)
+        if: matrix.os == 'windows'
+        timeout-minutes: 5
+        run: |
+          # Start server in background
+          $serverProcess = Start-Process -FilePath ".\test-env\Scripts\python.exe" -ArgumentList "-m", "flowos", "run", "--host", "localhost", "--port", "7860", "--backend-only" -PassThru -WindowStyle Hidden
+
+          # Wait for server to be ready (GitHub Actions will timeout after 5 minutes)
+          do {
+            try {
+              $response = Invoke-WebRequest -Uri "http://localhost:7860/health_check" -UseBasicParsing -TimeoutSec 5
+              if ($response.StatusCode -eq 200) {
+                Write-Host "✅ Server is ready on ${{ matrix.os }}-${{ matrix.arch }}"
+                break
+              }
+            } catch {
+              Start-Sleep -Seconds 5
+            }
+          } while ($true)
+
+          # Stop the server process
+          Stop-Process -Id $serverProcess.Id -Force -ErrorAction SilentlyContinue
+        shell: powershell
+
+      - name: Test server startup (Unix)
+        if: matrix.os != 'windows'
+        timeout-minutes: 5
+        env:
+          OBJC_DISABLE_INITIALIZE_FORK_SAFETY: YES
+        run: |
+          # Start server in background
+          ./test-env/bin/python -m flowos run --host localhost --port 7860 --backend-only &
+          SERVER_PID=$!
+
+          # Wait for server to be ready (GitHub Actions will timeout after 5 minutes)
+          while true; do
+            if curl -f http://localhost:7860/health_check >/dev/null 2>&1; then
+              echo "✅ Server is ready on ${{ matrix.os }}-${{ matrix.arch }}"
+              break
+            fi
+            sleep 5
+          done
+
+          # Clean shutdown
+          kill $SERVER_PID 2>/dev/null || true
+          sleep 5
+        shell: bash
+
+      - name: Test import in Python (Windows)
+        if: matrix.os == 'windows'
+        run: |
+          test-env\Scripts\python.exe -c "
+          try:
+              import flowos
+              print('✅ flowos import successful on ${{ matrix.os }}-${{ matrix.arch }}')
+          except Exception as e:
+              print(f'❌ flowos import failed on ${{ matrix.os }}-${{ matrix.arch }}: {e}')
+              exit(1)
+          "
+        shell: cmd
+
+      - name: Test import in Python (Unix)
+        if: matrix.os != 'windows'
+        run: |
+          ./test-env/bin/python -c "
+          try:
+              import flowos
+              print('✅ flowos import successful on ${{ matrix.os }}-${{ matrix.arch }}')
+          except Exception as e:
+              print(f'❌ flowos import failed on ${{ matrix.os }}-${{ matrix.arch }}: {e}')
+              exit(1)
+          "
+        shell: bash
+
+  test-installation-experimental:
+    name: Install & Run - ${{ matrix.os }} ${{ matrix.arch }} ${{ matrix.python-version }} (Experimental)
+    needs: [build-if-needed]
+    if: always() && (needs.build-if-needed.result == 'success' || needs.build-if-needed.result == 'skipped')
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Python 3.14 - Experimental (non-blocking) to monitor ecosystem readiness.
+          # macOS Intel (x86_64) is intentionally omitted: flowos requires
+          # onnxruntime>=1.26 on Python >=3.14 (pyproject.toml), but onnxruntime
+          # dropped macOS x86_64 wheels at 1.24 — so macOS Intel + py3.14 is
+          # permanently unsatisfiable (older onnxruntime that still ships macOS
+          # x86_64 wheels has no cp314 ABI). macOS Intel resolves fine through 3.13;
+          # arm64 has cp314 wheels. Running it would only burn the costly
+          # macos-latest-large runner on a guaranteed, no-signal failure.
+          - os: linux
+            arch: amd64
+            runner: ubuntu-latest
+            python-version: "3.14"
+          - os: windows
+            arch: amd64
+            runner: windows-latest
+            python-version: "3.14"
+          - os: macos
+            arch: arm64
+            runner: macos-latest
+            python-version: "3.14"
+
+    steps:
+      - name: Determine install method
+        id: install-method
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ -n "${{ inputs.flowos-version }}" ]; then
+              echo "method=pypi" >> $GITHUB_OUTPUT
+            else
+              echo "method=wheel" >> $GITHUB_OUTPUT
+            fi
+          else
+            # workflow_call always uses wheel method (backward compatibility)
+            echo "method=wheel" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: ${{ matrix.arch == 'amd64' && 'x64' || matrix.arch }}
+
+      - name: Setup UV
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+          ignore-empty-workdir: true
+
+      - name: Install Protocol Buffers (macOS AMD64)
+        if: matrix.os == 'macos' && matrix.arch == 'amd64'
+        run: |
+          if ! command -v protoc &> /dev/null; then
+            brew install protobuf
+          else
+            echo "protoc already installed, skipping"
+          fi
+        shell: bash
+
+      # Download artifacts for wheel installation
+      - name: Download flowos-sdk package artifact
+        if: steps.install-method.outputs.method == 'wheel' && (inputs.sdk-artifact-name != '' || needs.build-if-needed.outputs.sdk-artifact-name != '')
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ inputs.sdk-artifact-name || needs.build-if-needed.outputs.sdk-artifact-name || 'adhoc-dist-sdk' }}
+          path: ./sdk-dist
+
+      - name: Download FLOWOS_CORE package artifact
+        if: steps.install-method.outputs.method == 'wheel' && (inputs.flowos_core-artifact-name != '' || needs.build-if-needed.outputs.flowos_core-artifact-name != '')
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ inputs.flowos_core-artifact-name || needs.build-if-needed.outputs.flowos_core-artifact-name || 'adhoc-dist-flowos_core' }}
+          path: ./flowos_core-dist
+
+      - name: Download base package artifact
+        if: steps.install-method.outputs.method == 'wheel'
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ inputs.base-artifact-name || needs.build-if-needed.outputs.base-artifact-name || 'adhoc-dist-base' }}
+          path: ./base-dist
+
+      - name: Download main package artifact
+        if: steps.install-method.outputs.method == 'wheel'
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ inputs.main-artifact-name || needs.build-if-needed.outputs.main-artifact-name || 'adhoc-dist-main' }}
+          path: ./main-dist
+
+      - name: Download bundles package artifact
+        if: steps.install-method.outputs.method == 'wheel' && (inputs.bundles-artifact-name != '' || needs.build-if-needed.outputs.bundles-artifact-name != '')
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ inputs.bundles-artifact-name || needs.build-if-needed.outputs.bundles-artifact-name }}
+          path: ./bundles-dist
+
+      - name: Create fresh virtual environment
+        run: |
+          uv venv test-env --seed
+        shell: bash
+
+      - name: Install packages from wheel
+        if: steps.install-method.outputs.method == 'wheel'
+        run: |
+          set -eo pipefail
+          shopt -s nullglob
+
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            PYTHON=./test-env/Scripts/python.exe
+          else
+            PYTHON=./test-env/bin/python
+          fi
+
+          refresh_find_links() {
+            FIND_LINKS=()
+            for wheel_dir in ./sdk-dist ./flowos_core-dist ./base-dist ./bundles-dist; do
+              if [ -d "$wheel_dir" ]; then
+                FIND_LINKS+=(--find-links "$wheel_dir")
+              fi
+            done
+          }
+
+          install_wheels() {
+            label="$1"
+            shift
+            if [ "$#" -eq 0 ]; then
+              echo "No $label wheel found"
+              exit 1
+            fi
+            printf 'Installing %s wheel(s):\n' "$label"
+            printf '%s\n' "$@"
+            refresh_find_links
+            # See stable job above for rationale on --prerelease=if-necessary-or-explicit.
+            uv pip install --prerelease=if-necessary-or-explicit --python "$PYTHON" "${FIND_LINKS[@]}" "$@"
+          }
+
+          SDK_WHEELS=(./sdk-dist/*.whl)
+          FLOWOS_WHEELS=(./flowos_core-dist/*.whl)
+          if [ ${#SDK_WHEELS[@]} -gt 0 ] || [ ${#FLOWOS_WHEELS[@]} -gt 0 ]; then
+            install_wheels "SDK/FLOWOS_CORE" "${SDK_WHEELS[@]}" "${FLOWOS_WHEELS[@]}"
+          fi
+
+          BASE_WHEELS=(./base-dist/*.whl)
+          install_wheels "base" "${BASE_WHEELS[@]}"
+
+          if [ -d ./bundles-dist ]; then
+            BUNDLE_WHEELS=(./bundles-dist/*.whl)
+            install_wheels "bundle" "${BUNDLE_WHEELS[@]}"
+          fi
+
+          MAIN_WHEELS=()
+          while IFS= read -r wheel; do
+            MAIN_WHEELS+=("$wheel")
+          done < <(find ./main-dist -name "flowos*.whl" ! -name "flowos_base*.whl" -type f | sort)
+          if [ ${#MAIN_WHEELS[@]} -ne 1 ]; then
+            echo "Expected exactly one flowos wheel in ./main-dist, found ${#MAIN_WHEELS[@]}"
+            find ./main-dist -name "*.whl" -type f | sort
+            exit 1
+          fi
+          install_wheels "main" "${MAIN_WHEELS[@]}"
+        shell: bash
+
+      - name: Force reinstall local wheels to prevent downgrades (Windows)
+        if: steps.install-method.outputs.method == 'wheel' && matrix.os == 'windows'
+        run: |
+          # Expose the local wheel dirs so dependency re-resolution (the
+          # pre-release path below drops --no-deps) can find the local
+          # pre-release flowos_core/base wheels. Without these, uv re-resolves
+          # flowos-base's `flowos_core>=X.Y.Zrc0` constraint against PyPI only, where
+          # the matching rc/dev wheel is not published yet, and fails with
+          # "No solution found when resolving dependencies".
+          FIND_LINKS=()
+          for wheel_dir in ./sdk-dist ./flowos_core-dist ./base-dist ./bundles-dist; do
+            if [ -d "$wheel_dir" ]; then
+              FIND_LINKS+=(--find-links "$wheel_dir")
+            fi
+          done
+
+          # Reinstall FLOWOS_CORE if it was provided
+          if [ -n "${{ inputs.flowos_core-artifact-name || needs.build-if-needed.outputs.flowos_core-artifact-name }}" ]; then
+            FLOWOS_WHEEL=$(find ./flowos_core-dist -name "*.whl" -type f | head -1)
+            if [ -n "$FLOWOS_WHEEL" ]; then
+              echo "Force reinstalling FLOWOS_CORE: $FLOWOS_WHEEL"
+              INSTALL_WHEELS=("$FLOWOS_WHEEL")
+              SDK_WHEEL=""
+              if [ -d ./sdk-dist ]; then
+                SDK_WHEEL=$(find ./sdk-dist -name "*.whl" -type f | head -1)
+              fi
+              if [ -n "$SDK_WHEEL" ]; then
+                echo "Force reinstalling flowos-sdk with FLOWOS_CORE: $SDK_WHEEL"
+                INSTALL_WHEELS=("$SDK_WHEEL" "$FLOWOS_WHEEL")
+              fi
+              NO_DEPS="--no-deps"
+              if [ "${{ inputs.pre_release }}" = "true" ]; then
+                NO_DEPS=""
+              fi
+              uv pip install --force-reinstall $NO_DEPS --prerelease=if-necessary-or-explicit "${FIND_LINKS[@]}" --python ./test-env/Scripts/python.exe "${INSTALL_WHEELS[@]}"
+            fi
+          fi
+
+          # Reinstall base
+          BASE_WHEEL=$(find ./base-dist -name "*.whl" -type f | head -1)
+          if [ -n "$BASE_WHEEL" ]; then
+            echo "Force reinstalling flowos-base: $BASE_WHEEL"
+            NO_DEPS="--no-deps"
+            if [ "${{ inputs.pre_release }}" = "true" ]; then
+              NO_DEPS=""
+            fi
+            uv pip install --force-reinstall $NO_DEPS --prerelease=if-necessary-or-explicit "${FIND_LINKS[@]}" --python ./test-env/Scripts/python.exe "$BASE_WHEEL"
+          fi
+        shell: bash
+
+      - name: Force reinstall local wheels to prevent downgrades (Unix)
+        if: steps.install-method.outputs.method == 'wheel' && matrix.os != 'windows'
+        run: |
+          # Expose the local wheel dirs so dependency re-resolution (the
+          # pre-release path below drops --no-deps) can find the local
+          # pre-release flowos_core/base wheels. Without these, uv re-resolves
+          # flowos-base's `flowos_core>=X.Y.Zrc0` constraint against PyPI only, where
+          # the matching rc/dev wheel is not published yet, and fails with
+          # "No solution found when resolving dependencies".
+          FIND_LINKS=()
+          for wheel_dir in ./sdk-dist ./flowos_core-dist ./base-dist ./bundles-dist; do
+            if [ -d "$wheel_dir" ]; then
+              FIND_LINKS+=(--find-links "$wheel_dir")
+            fi
+          done
+
+          # Reinstall FLOWOS_CORE if it was provided
+          if [ -n "${{ inputs.flowos_core-artifact-name || needs.build-if-needed.outputs.flowos_core-artifact-name }}" ]; then
+            FLOWOS_WHEEL=$(find ./flowos_core-dist -name "*.whl" -type f | head -1)
+            if [ -n "$FLOWOS_WHEEL" ]; then
+              echo "Force reinstalling FLOWOS_CORE: $FLOWOS_WHEEL"
+              INSTALL_WHEELS=("$FLOWOS_WHEEL")
+              SDK_WHEEL=""
+              if [ -d ./sdk-dist ]; then
+                SDK_WHEEL=$(find ./sdk-dist -name "*.whl" -type f | head -1)
+              fi
+              if [ -n "$SDK_WHEEL" ]; then
+                echo "Force reinstalling flowos-sdk with FLOWOS_CORE: $SDK_WHEEL"
+                INSTALL_WHEELS=("$SDK_WHEEL" "$FLOWOS_WHEEL")
+              fi
+              NO_DEPS="--no-deps"
+              if [ "${{ inputs.pre_release }}" = "true" ]; then
+                NO_DEPS=""
+              fi
+              uv pip install --force-reinstall $NO_DEPS --prerelease=if-necessary-or-explicit "${FIND_LINKS[@]}" --python ./test-env/bin/python "${INSTALL_WHEELS[@]}"
+            fi
+          fi
+
+          # Reinstall base
+          BASE_WHEEL=$(find ./base-dist -name "*.whl" -type f | head -1)
+          if [ -n "$BASE_WHEEL" ]; then
+            echo "Force reinstalling flowos-base: $BASE_WHEEL"
+            NO_DEPS="--no-deps"
+            if [ "${{ inputs.pre_release }}" = "true" ]; then
+              NO_DEPS=""
+            fi
+            uv pip install --force-reinstall $NO_DEPS --prerelease=if-necessary-or-explicit "${FIND_LINKS[@]}" --python ./test-env/bin/python "$BASE_WHEEL"
+          fi
+        shell: bash
+
+      # PyPI installation steps
+      - name: Install flowos from PyPI (Windows)
+        if: steps.install-method.outputs.method == 'pypi' && matrix.os == 'windows'
+        run: |
+          if [ -n "${{ inputs.flowos-version }}" ]; then
+            uv pip install --python ./test-env/Scripts/python.exe flowos==${{ inputs.flowos-version }}
+          else
+            uv pip install --python ./test-env/Scripts/python.exe flowos
+          fi
+        shell: bash
+
+      - name: Install flowos from PyPI (Unix)
+        if: steps.install-method.outputs.method == 'pypi' && matrix.os != 'windows'
+        run: |
+          if [ -n "${{ inputs.flowos-version }}" ]; then
+            uv pip install --python ./test-env/bin/python flowos==${{ inputs.flowos-version }}
+          else
+            uv pip install --python ./test-env/bin/python flowos
+          fi
+        shell: bash
+
+      # Install additional dependencies
+      - name: Install additional dependencies (Windows)
+        if: matrix.os == 'windows'
+        run: |
+          uv pip install --python ./test-env/Scripts/python.exe openai
+        shell: bash
+
+      - name: Install additional dependencies (Unix)
+        if: matrix.os != 'windows'
+        run: |
+          uv pip install --python ./test-env/bin/python openai
+        shell: bash
+
+      # Test steps
+      - name: Test CLI help command (Windows)
+        if: matrix.os == 'windows'
+        run: |
+          uv run --python ./test-env/Scripts/python.exe python -m flowos --help
+        shell: cmd
+
+      - name: Test CLI help command (Unix)
+        if: matrix.os != 'windows'
+        run: |
+          uv run --python ./test-env/bin/python python -m flowos --help
+        shell: bash
+
+      - name: Test server startup (Windows)
+        if: matrix.os == 'windows'
+        timeout-minutes: 5
+        run: |
+          # Start server in background
+          $serverProcess = Start-Process -FilePath ".\test-env\Scripts\python.exe" -ArgumentList "-m", "flowos", "run", "--host", "localhost", "--port", "7860", "--backend-only" -PassThru -WindowStyle Hidden
+
+          # Wait for server to be ready (GitHub Actions will timeout after 5 minutes)
+          do {
+            try {
+              $response = Invoke-WebRequest -Uri "http://localhost:7860/health_check" -UseBasicParsing -TimeoutSec 5
+              if ($response.StatusCode -eq 200) {
+                Write-Host "✅ Server is ready on ${{ matrix.os }}-${{ matrix.arch }}"
+                break
+              }
+            } catch {
+              Start-Sleep -Seconds 5
+            }
+          } while ($true)
+
+          # Stop the server process
+          Stop-Process -Id $serverProcess.Id -Force -ErrorAction SilentlyContinue
+        shell: powershell
+
+      - name: Test server startup (Unix)
+        if: matrix.os != 'windows'
+        timeout-minutes: 5
+        env:
+          OBJC_DISABLE_INITIALIZE_FORK_SAFETY: YES
+        run: |
+          # Start server in background
+          ./test-env/bin/python -m flowos run --host localhost --port 7860 --backend-only &
+          SERVER_PID=$!
+
+          # Wait for server to be ready (GitHub Actions will timeout after 5 minutes)
+          while true; do
+            if curl -f http://localhost:7860/health_check >/dev/null 2>&1; then
+              echo "✅ Server is ready on ${{ matrix.os }}-${{ matrix.arch }}"
+              break
+            fi
+            sleep 5
+          done
+
+          # Clean shutdown
+          kill $SERVER_PID 2>/dev/null || true
+          sleep 5
+        shell: bash
+
+      - name: Test import in Python (Windows)
+        if: matrix.os == 'windows'
+        run: |
+          test-env\Scripts\python.exe -c "
+          try:
+              import flowos
+              print('✅ flowos import successful on ${{ matrix.os }}-${{ matrix.arch }}')
+          except Exception as e:
+              print(f'❌ flowos import failed on ${{ matrix.os }}-${{ matrix.arch }}: {e}')
+              exit(1)
+          "
+        shell: cmd
+
+      - name: Test import in Python (Unix)
+        if: matrix.os != 'windows'
+        run: |
+          ./test-env/bin/python -c "
+          try:
+              import flowos
+              print('✅ flowos import successful on ${{ matrix.os }}-${{ matrix.arch }}')
+          except Exception as e:
+              print(f'❌ flowos import failed on ${{ matrix.os }}-${{ matrix.arch }}: {e}')
+              exit(1)
+          "
+        shell: bash
+
+  test-summary:
+    name: Cross-Platform Test Summary
+    needs: [test-installation-stable, test-installation-experimental]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check test results
+        run: |
+          stable_result="${{ needs.test-installation-stable.result }}"
+          experimental_result="${{ needs.test-installation-experimental.result }}"
+
+          echo "Stable platforms result: $stable_result"
+          echo "Experimental platforms result: $experimental_result"
+
+          # Stable platforms must succeed, experimental can fail
+          if [ "$stable_result" = "success" ]; then
+            if [ "$experimental_result" = "success" ]; then
+              if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+                if [ -n "${{ inputs.flowos-version }}" ]; then
+                  echo "✅ All PyPI installation tests passed (including Python 3.14)"
+                else
+                  echo "✅ All source build and installation tests passed (including Python 3.14)"
+                fi
+              else
+                echo "✅ All cross-platform tests passed - PyPI upload can proceed"
+              fi
+            else
+              if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+                if [ -n "${{ inputs.flowos-version }}" ]; then
+                  echo "✅ PyPI installation tests passed (Python 3.14 experimental failures are acceptable)"
+                else
+                  echo "✅ Source build and installation tests passed (Python 3.14 experimental failures are acceptable)"
+                fi
+              else
+                echo "✅ Cross-platform tests passed - Python 3.14 experimental failures are acceptable - PyPI upload can proceed"
+              fi
+            fi
+          elif [ "$stable_result" = "failure" ]; then
+            echo "❌ Critical platform tests failed - blocking release"
+            echo "Stable platforms (Python 3.10, 3.12, 3.13) must pass for release"
+            exit 1
+          elif [ "$stable_result" = "cancelled" ]; then
+            echo "❌ Critical platform tests were cancelled"
+            exit 1
+          else
+            echo "❌ Critical platform tests were skipped unexpectedly"
+            exit 1
+          fi

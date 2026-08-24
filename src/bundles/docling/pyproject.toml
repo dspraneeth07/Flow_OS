@@ -1,0 +1,65 @@
+[project]
+name = "flowos-docling"
+version = "0.1.1"
+description = "Docling document processing components as a standalone FlowOS Extension Bundle."
+readme = "README.md"
+requires-python = ">=3.10,<3.15"
+license = { text = "MIT" }
+authors = [
+    { name = "FlowOS", email = "contact@flowos.org" },
+]
+keywords = ["flowos", "flowos_core", "extension", "bundle", "docling", "documents"]
+
+# Keep the full local converter and OCR stack optional. docling-core remains a
+# base dependency because the bundle exchanges DoclingDocument objects even when
+# conversion happens remotely.
+dependencies = [
+    "flowos-core>=0.1.1",
+    "httpx>=0.28.1,<1.0.0",
+    "docling-core>=2.36.1,<3.0.0",
+]
+
+[project.optional-dependencies]
+local = [
+    "docling>=2.36.1,<3.0.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "tesserocr>=2.8.0",
+    "rapidocr-onnxruntime>=1.4.4",
+    "ocrmac>=1.0.0; sys_platform == 'darwin'",
+    "torch>=2.6.0",
+    "torchvision>=0.21.0",
+]
+chunking = [
+    "docling-core[chunking]>=2.36.1,<3.0.0",
+    "tiktoken>=0.7.0",
+]
+image-description = [
+    "flowos-docling[local]",
+    "langchain-docling>=1.1.0",
+]
+all = [
+    "flowos-docling[local,chunking,image-description]",
+]
+
+[project.urls]
+Homepage = "https://github.com/dspraneeth07/FlowOS"
+Documentation = "https://github.com/dspraneeth07/FlowOS"
+Repository = "https://github.com/dspraneeth07/FlowOS"
+
+[project.entry-points."flowos.extensions"]
+flowos-docling = "flowos_docling"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/flowos_docling"]
+include = ["src/flowos_docling/extension.json", "src/flowos_docling/components/**/*.py"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/flowos_docling",
+    "extension.json",
+    "README.md",
+    "pyproject.toml",
+]

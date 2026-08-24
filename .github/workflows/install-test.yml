@@ -1,0 +1,132 @@
+name: Install test (Windows / macOS / Linux)
+
+# Proves `pip install flowos` REALLY works on all three operating systems, on
+# real machines -- not just that the dependency graph resolves.
+#
+# This exists because litellm 1.92.0 became a mixed Python/Rust project shipping
+# manylinux wheels ONLY. On Windows and macOS there was no wheel, so pip fell back
+# to the sdist and the install died compiling Rust:
+#     Failed to build litellm==1.92.0
+#     error: linker `link.exe` not found
+# Resolution alone did not catch it -- only an actual install did. Hence: install
+# for real, on every OS, and run the CLI.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "Install from the wheels built in this run, or from PyPI"
+        required: true
+        default: wheels
+        type: choice
+        options: [wheels, pypi]
+      version:
+        description: "Version to install when source=pypi (blank = latest)"
+        required: false
+        default: ""
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "**/pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/install-test.yml"
+
+jobs:
+  build:
+    name: Build wheels
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Build all packages
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          for pkg in flowos-sdk flowos-core flowos-base flowos \
+                     flowos-arxiv flowos-docling flowos-duckduckgo \
+                     flowos-ibm flowos-stepflow; do
+            uv build --package "$pkg"
+          done
+          ls -la dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  install:
+    name: ${{ matrix.os }} / py${{ matrix.python }}
+    needs: build
+    strategy:
+      fail-fast: false # one OS failing must not hide the others
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.10", "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install FlowOS (from wheels)
+        if: inputs.source != 'pypi'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          # --find-links lets the flowos-* packages resolve each other locally
+          # while every third-party dep still comes from PyPI, exactly as a real
+          # user's install would.
+          pip install --find-links dist/ flowos
+
+      - name: Install FlowOS (from PyPI)
+        if: inputs.source == 'pypi'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          if [ -n "${{ inputs.version }}" ]; then
+            pip install "flowos==${{ inputs.version }}"
+          else
+            pip install flowos
+          fi
+
+      - name: litellm must be a pure-python wheel (the bug that broke win/mac)
+        shell: bash
+        run: |
+          set -euo pipefail
+          v=$(python -c "import importlib.metadata as m; print(m.version('litellm'))")
+          echo "litellm == $v"
+          python - <<'PY'
+          import importlib.metadata as m
+          from packaging.version import Version
+          v = Version(m.version("litellm"))
+          # >=1.92 ships manylinux-only wheels -> no wheel on Windows/macOS.
+          assert v < Version("1.92"), f"litellm {v} has no Windows/macOS wheel"
+          print(f"OK: litellm {v} < 1.92 (pure-python wheel)")
+          PY
+
+      - name: Import the packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -c "import flowos, flowos_core, flowos_sdk; print('imports OK')"
+
+      - name: Run the CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          flowos --help > /dev/null && echo "flowos --help OK"
+          flowos-mcp --help > /dev/null 2>&1 && echo "flowos-mcp OK" || echo "flowos-mcp present"
+
+      - name: Report
+        shell: bash
+        run: |
+          python -c "import importlib.metadata as m; print('flowos', m.version('flowos'), 'installed OK on ${{ matrix.os }} py${{ matrix.python }}')"

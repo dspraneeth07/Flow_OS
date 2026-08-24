@@ -1,0 +1,78 @@
+---
+title: FlowOS Extensions overview
+slug: /extensions-overview
+---
+
+import Icon from "@site/src/components/icon";
+
+FlowOS ships component bundles that are maintained and released separately from the core FlowOS server as Extensions.
+Instead of every integration being built into `flowos`, each bundle is its own pip-installable package, such as `flowos-duckduckgo` or `flowos-arxiv`.
+
+When you run `uv pip install flowos`, you install:
+
+* All FlowOS core components
+* All bundles that ship as dependencies of the `flowos` metapackage
+
+Some bundles that were previously included in `flowos` are moved into standalone packages.
+The `flowos` metapackage adds them as regular pip dependencies, so `pip install flowos` continues to include them.
+
+## Current Extension bundles
+
+The following Extension bundles are included with `uv pip install flowos`:
+
+| Package | Bundle | Components |
+|---------|--------|------------|
+| `flowos-arxiv` | [arXiv](/bundles-arxiv) | arXiv search |
+| `flowos-docling` | [Docling](/bundles-docling) | Document parsing and chunking |
+| `flowos-duckduckgo` | [DuckDuckGo](/bundles-duckduckgo) | Web search |
+| `flowos-ibm` | [IBM](/bundles-ibm) | IBM watsonx.ai LLM and embeddings, IBM Db2 Vector Store |
+
+The internal identifier for each component changes.
+For example, a DuckDuckGo component previously referenced as a `DuckDuckGoSearchComponent` class is now `ext:duckduckgo:DuckDuckGoSearchComponent@official`.
+FlowOS rewrites these references automatically when you open a saved flow, so in most cases the migration is invisible.
+
+## If a component is missing after an upgrade
+
+If you open a flow and a node shows an error like `component-not-found`, it means the automatic migration couldn't resolve the component reference.
+This can happen when:
+
+* The bundle the component came from was not installed in the upgraded environment.
+* The component was referenced by a name that appears in more than one bundle (`component-name-ambiguous`).
+
+In both cases the error message includes a hint that names the expected canonical ID. For example:
+
+```text
+component-not-found-with-hint: DuckDuckGoSearchComponent not found.
+Hint: try ext:duckduckgo:DuckDuckGoSearchComponent@official
+```
+
+Use the bundle name from the hint, such as `duckduckgo` in this example, to find and install the correct extension package, and then reload the flow.
+
+## Install a bundle extension
+
+If a bundle you need is not included in your FlowOS environment, install it with pip:
+
+```bash
+uv pip install flowos-duckduckgo
+uv run flowos run
+```
+
+FlowOS discovers the package at server startup and loads the components into the palette automatically.
+No additional configuration is required.
+
+To see what extensions are currently loaded, run:
+
+```bash
+flowos_core extension list
+```
+
+## Build your own extension
+
+If you have custom components that you want to distribute and version independently of your FlowOS install, you can package them as an extension.
+
+For more information, see [Build your first FlowOS Extension](./extensions-quickstart.mdx).
+
+## See also
+
+- [Build your first extension](./extensions-quickstart)
+- [Manifest reference](./extensions-manifest)
