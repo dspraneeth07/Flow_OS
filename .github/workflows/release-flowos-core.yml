@@ -246,7 +246,7 @@ jobs:
 
       - name: Prepare Docker metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: |
             flowosai/flowos_core
