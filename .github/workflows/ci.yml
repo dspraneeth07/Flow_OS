@@ -228,7 +228,7 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
       - name: Filter Paths
         id: filter
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           filters: ./.github/changes-filter.yaml
       - name: Set up Python
